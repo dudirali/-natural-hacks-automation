@@ -11,8 +11,8 @@ export const Root: React.FC = () => {
       defaultProps={DEFAULT_PROPS}
       durationInFrames={DEFAULT_PROPS.durationFrames}
       fps={DEFAULT_PROPS.fps}
-      width={1920}
-      height={1080}
+      width={1280}
+      height={720}
       calculateMetadata={({ props }) => ({
         durationInFrames: props.durationFrames,
         fps: props.fps,

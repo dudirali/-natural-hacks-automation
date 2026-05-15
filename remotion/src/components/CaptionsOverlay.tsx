@@ -89,14 +89,14 @@ export const CaptionsOverlay: React.FC<Props> = ({ words }) => {
           style={{
             display: "inline-block",
             fontFamily,
-            fontSize: 64,
+            fontSize: 42, // scaled for 720p (was 64 at 1080p)
             fontWeight: 800,
             lineHeight: 1.15,
             color: "#FFFFFF",
             letterSpacing: "0.005em",
-            padding: "16px 32px",
+            padding: "10px 22px",
             background: "rgba(0,0,0,0.55)",
-            borderRadius: 14,
+            borderRadius: 10,
             textShadow: "0 4px 16px rgba(0,0,0,0.7)",
             WebkitTextStroke: "1px rgba(0,0,0,0.4)",
           }}
