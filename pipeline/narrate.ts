@@ -77,23 +77,33 @@ export async function narrate(
       body = await res.text();
       break;
     } catch (e) {
-      const err = e as Error & { cause?: { code?: string }; code?: string };
-      const code = err.cause?.code ?? err.code ?? err.name;
+      const err = e as Error & { cause?: { code?: string | number }; code?: string | number };
+      // Coerce to string for unified comparison. DOMException.code is a NUMBER (23 = TIMEOUT_ERR);
+      // undici errors use string codes (UND_ERR_HEADERS_TIMEOUT, ECONNRESET, etc.). err.name is "TimeoutError" / "AbortError".
+      const nameStr = String(err.name ?? "");
+      const codeStr = String(err.cause?.code ?? err.code ?? "");
       const transient =
-        code === "UND_ERR_HEADERS_TIMEOUT" ||
-        code === "UND_ERR_BODY_TIMEOUT" ||
-        code === "UND_ERR_SOCKET" ||
-        code === "ECONNRESET" ||
-        code === "ETIMEDOUT" ||
-        code === "AbortError" ||
-        code === "TimeoutError";
+        // Name-based (DOMException, AbortController)
+        nameStr === "TimeoutError" ||
+        nameStr === "AbortError" ||
+        // String code (undici / Node)
+        codeStr === "UND_ERR_HEADERS_TIMEOUT" ||
+        codeStr === "UND_ERR_BODY_TIMEOUT" ||
+        codeStr === "UND_ERR_SOCKET" ||
+        codeStr === "UND_ERR_CONNECT_TIMEOUT" ||
+        codeStr === "ECONNRESET" ||
+        codeStr === "ETIMEDOUT" ||
+        codeStr === "EAI_AGAIN" ||
+        // Numeric code (DOMException: 23 = TIMEOUT_ERR, 20 = ABORT_ERR)
+        codeStr === "23" ||
+        codeStr === "20";
       if (!transient || attempt === MAX_ATTEMPTS) {
-        console.error(`[narrate] ❌ giving up after ${attempt} attempt(s). Last error: ${code}`);
+        console.error(`[narrate] ❌ giving up after ${attempt} attempt(s). name=${nameStr} code=${codeStr}`);
         throw e;
       }
-      const delay = Math.min(15_000, Math.pow(2, attempt - 1) * 2000); // 2s, 4s, 8s, 15s, 15s
+      const delay = Math.min(15_000, Math.pow(2, attempt - 1) * 2000);
       console.warn(
-        `[narrate] ⚠️  attempt ${attempt}/${MAX_ATTEMPTS} failed (${code}). Retrying in ${delay}ms...`
+        `[narrate] ⚠️  attempt ${attempt}/${MAX_ATTEMPTS} failed (name=${nameStr} code=${codeStr}). Retrying in ${delay}ms...`
       );
       await new Promise((r) => setTimeout(r, delay));
     }
