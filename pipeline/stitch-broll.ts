@@ -78,6 +78,12 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
       "-preset", "veryfast",
       "-crf", "23",
       "-pix_fmt", "yuv420p",
+      // Frequent keyframes (every 1s) so OffthreadVideo can seek per-frame
+      // without ffmpeg re-decoding long GOPs. Without this, Remotion's
+      // 33s delayRender budget expires while seeking into a 5-minute MP4.
+      "-g", String(fps),
+      "-keyint_min", String(fps),
+      "-sc_threshold", "0",
       "-c:a", "aac",
       "-b:a", "192k",
       "-ac", "2",

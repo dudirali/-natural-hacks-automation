@@ -91,8 +91,10 @@ async function main() {
   logHeader("Step 4/7 — Remotion render");
   const finalMp4 = join(TOPIC_OUT_DIR, "final.mp4");
   const propsPath = join(TOPIC_OUT_DIR, "render-props.json");
+  // --timeout: raise delayRender budget so OffthreadVideo seeking into a long
+  // stitched MP4 doesn't expire while ffmpeg extracts a frame (default 30s).
   execSync(
-    `npx remotion render remotion/src/index.ts Long ${finalMp4} --props=${propsPath}`,
+    `npx remotion render remotion/src/index.ts Long ${finalMp4} --props=${propsPath} --timeout=120000`,
     { cwd: ROOT, stdio: "inherit" }
   );
   console.log(`✅ Rendered → ${finalMp4}`);
