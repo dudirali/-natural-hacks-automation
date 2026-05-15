@@ -1,0 +1,37 @@
+{
+  "name": "natural-hacks-automation",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "daily": "tsx pipeline/daily-run.ts",
+    "build:video": "tsx pipeline/build-from-segments.ts",
+    "gen:script": "tsx pipeline/generate-script.ts",
+    "gen:topics": "tsx pipeline/generate-topic-bank.ts",
+    "pick-topic": "tsx pipeline/pick-topic.ts",
+    "voice:samples": "tsx smoke-tests/female-voice-samples.ts",
+    "yt:oauth": "tsx pipeline/youtube-oauth.ts",
+    "yt:upload": "tsx pipeline/youtube-upload.ts",
+    "remotion:render": "remotion render remotion/src/index.ts Long output/$BUILD_TOPIC_ID/final.mp4 --props=output/$BUILD_TOPIC_ID/render-props.json",
+    "remotion:studio": "remotion studio remotion/src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@remotion/bundler": "^4.0.300",
+    "@remotion/cli": "^4.0.300",
+    "@remotion/google-fonts": "^4.0.460",
+    "@remotion/renderer": "^4.0.300",
+    "dotenv": "^16.4.5",
+    "googleapis": "^171.4.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.300"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

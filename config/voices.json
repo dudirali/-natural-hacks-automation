@@ -1,0 +1,17 @@
+{
+  "narrator_primary": {
+    "voice_id": "TBD",
+    "name": "TBD — user picks after listening to samples",
+    "description": "Gentle female American narrator for wellness/health channel",
+    "language": "en",
+    "locale": "en-US",
+    "engine": "starfish",
+    "endpoint": "https://api.heygen.com/v3/voices/speech",
+    "_candidates": {
+      "aria":         "007e1378fc454a9f976db570ba6164a7",
+      "caryns":       "0082e70326864107823605db0d77f5e0",
+      "saffron":      "0258bbc2cd8648cfa357adfb833f6d7b",
+      "rose_ugc":     "0495e14c2bd74eb3aeeef03583e0bce5"
+    }
+  }
+}

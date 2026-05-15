@@ -1,0 +1,25 @@
+{
+  "broll_source": "pexels",
+  "broll_rationale": "Stock real footage is more realistic + trustworthy for health niche than AI generation. Free via Pexels API (200 req/hour). Also 5-10× cheaper than Veo for 5-min videos.",
+  "narrator": {
+    "engine": "heygen-starfish",
+    "default_speed": 1.05,
+    "speed_rationale": "Calm wellness pace — barely faster than natural. NOT 1.3x like shorts."
+  },
+  "video_structure": {
+    "aspect_ratio": "16:9",
+    "resolution": "1920x1080",
+    "fps": 30,
+    "target_minutes": 5,
+    "segments_per_video": "36-42",
+    "words_per_segment": "15-25",
+    "rationale": "Long-form educational health videos. Each segment is one beat (~6-10s of narration), with Pexels B-roll keyword-matched per segment for perfect sync."
+  },
+  "scene_tail_buffer_seconds": 0.1,
+  "youtube": {
+    "category_id": "27",
+    "category_name": "Education",
+    "privacy_status": "public",
+    "include_disclaimer": true
+  }
+}
