@@ -1,11 +1,5 @@
 import React from "react";
-import {
-  AbsoluteFill,
-  Audio,
-  OffthreadVideo,
-  Sequence,
-  staticFile,
-} from "remotion";
+import { AbsoluteFill, OffthreadVideo, staticFile } from "remotion";
 import { z } from "zod";
 import { CaptionsOverlay } from "./components/CaptionsOverlay";
 
@@ -15,68 +9,44 @@ export const wordSchema = z.object({
   end: z.number(),
 });
 
-export const segmentSchema = z.object({
-  id: z.number(),
-  role: z.string(),
-  text: z.string(),
-  duration_seconds: z.number(),
-  audioFile: z.string(),
-  videoFile: z.string(),
-  words: z.array(wordSchema),
-  audioDuration: z.number(),
-});
-
 export const longSchema = z.object({
-  segments: z.array(segmentSchema),
-  musicFile: z.string().nullable().optional(),
-  musicVolume: z.number().optional(),
+  /** Single pre-stitched video file (B-roll + narration + music baked in by FFmpeg) */
+  videoFile: z.string(),
+  /** Global word timestamps across the entire stitched video */
+  words: z.array(wordSchema),
   fps: z.number(),
   durationFrames: z.number(),
   totalSeconds: z.number().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
 });
 
 export type LongProps = z.infer<typeof longSchema>;
 
 export const DEFAULT_PROPS: LongProps = {
-  segments: [],
-  musicFile: null,
-  musicVolume: 0.05,
+  videoFile: "stitched-broll.mp4",
+  words: [],
   fps: 30,
   durationFrames: 90,
   totalSeconds: 3,
+  width: 1280,
+  height: 720,
 };
 
-export const Long: React.FC<LongProps> = ({
-  segments,
-  musicFile,
-  musicVolume = 0.05,
-  fps,
-}) => {
-  let cumulativeFrames = 0;
-
+/**
+ * Lightweight composition: one OffthreadVideo source (FFmpeg-stitched B-roll
+ * with audio baked in) + a captions overlay. This avoids the 38-source memory
+ * issue that crashed Chromium on Railway.
+ */
+export const Long: React.FC<LongProps> = ({ videoFile, words }) => {
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {/* Per-segment B-roll + per-segment narration. Each segment is one Sequence. */}
-      {segments.map((s) => {
-        const fromFrame = cumulativeFrames;
-        const durationInFrames = Math.max(1, Math.round(s.duration_seconds * fps));
-        cumulativeFrames += durationInFrames;
-        return (
-          <Sequence key={s.id} from={fromFrame} durationInFrames={durationInFrames}>
-            <AbsoluteFill>
-              <OffthreadVideo
-                src={staticFile(s.videoFile)}
-                muted
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-              <Audio src={staticFile(s.audioFile)} />
-              <CaptionsOverlay words={s.words} />
-            </AbsoluteFill>
-          </Sequence>
-        );
-      })}
+      <OffthreadVideo
+        src={staticFile(videoFile)}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+      />
 
-      {/* Top-level subtle vignette at bottom for caption legibility on any background */}
+      {/* Vignette at bottom for caption legibility */}
       <AbsoluteFill
         style={{
           background:
@@ -85,8 +55,8 @@ export const Long: React.FC<LongProps> = ({
         }}
       />
 
-      {/* Background music (very low volume — narrator is the focus) */}
-      {musicFile ? <Audio src={staticFile(musicFile)} volume={musicVolume} /> : null}
+      {/* Captions overlay using global word timings */}
+      <CaptionsOverlay words={words} />
     </AbsoluteFill>
   );
 };

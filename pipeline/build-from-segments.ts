@@ -3,18 +3,15 @@ import { readFile, writeFile, mkdir, copyFile, readdir } from "node:fs/promises"
 import { join, basename } from "node:path";
 import { narrateSegments } from "./narrate-segments.ts";
 import { searchAndDownloadClip } from "./pexels.ts";
+import { stitchBroll } from "./stitch-broll.ts";
 import type { Segment } from "./generate-script.ts";
 
-interface ResolvedSegment {
-  id: number;
-  role: string;
-  text: string;
-  duration_seconds: number;
-  audioFile: string;
-  videoFile: string;
-  words: { word: string; start: number; end: number }[];
-  audioDuration: number;
-  pexelsSource?: { videoId: number; url: string; usedKeyword: string };
+interface CaptionWord {
+  word: string;
+  /** GLOBAL start time (across all stitched segments) */
+  start: number;
+  /** GLOBAL end time */
+  end: number;
 }
 
 const ROOT = process.cwd();
@@ -26,20 +23,21 @@ const SEGMENTS_CONFIG = process.env.BUILD_SEGMENTS_CONFIG
   ? join(ROOT, process.env.BUILD_SEGMENTS_CONFIG)
   : join(OUT_DIR, "segments.json");
 
-// 1.05x — narrator stays calm. The shorts channel runs 1.3x; this is long-form wellness, gentle.
 const NARRATION_SPEED = parseFloat(process.env.NARRATION_SPEED ?? "1.05");
-const SCENE_TAIL_BUFFER = 0.1; // 100ms extra so audio doesn't get clipped at boundary
+const SCENE_TAIL_BUFFER = 0.1;
+const TARGET_WIDTH = 1280;
+const TARGET_HEIGHT = 720;
+const TARGET_FPS = 30;
 
 await mkdir(SEGMENTS_DIR, { recursive: true });
 await mkdir(PUBLIC_DIR, { recursive: true });
 
-console.log(`=== Build Pipeline (long-form, ${NARRATION_SPEED}x narration) ===\n`);
+console.log(`=== Build Pipeline (long-form, FFmpeg-stitched, ${NARRATION_SPEED}x narration) ===\n`);
 const segments: Segment[] = JSON.parse(await readFile(SEGMENTS_CONFIG, "utf8"));
 console.log(`Loaded ${segments.length} segments from ${SEGMENTS_CONFIG}`);
 
-// PHASE 1 — TTS for all segments in parallel (capped concurrency)
-// Concurrency 4 (not 8) — gentler on HeyGen API, fewer concurrent network connections from Railway
-console.log(`\n[1/4] TTS for ${segments.length} segments (concurrency=4)...`);
+// PHASE 1 — TTS for all segments in parallel (concurrency 4)
+console.log(`\n[1/5] TTS for ${segments.length} segments (concurrency=4)...`);
 const tt0 = Date.now();
 const narrations = await narrateSegments(segments, SEGMENTS_DIR, {
   speed: NARRATION_SPEED,
@@ -47,13 +45,12 @@ const narrations = await narrateSegments(segments, SEGMENTS_DIR, {
 });
 console.log(`      ✅ TTS done in ${((Date.now() - tt0) / 1000).toFixed(0)}s`);
 
-// PHASE 2 — for each segment, search Pexels and download a clip ≥ audio duration
-console.log(`\n[2/4] Searching + downloading Pexels clips...`);
+// PHASE 2 — Pexels per segment, parallel
+console.log(`\n[2/5] Searching + downloading Pexels clips...`);
 const ct0 = Date.now();
-const PEXELS_CONCURRENCY = 6; // free tier 200/hour, no need to spam
+const PEXELS_CONCURRENCY = 6;
 let cursor = 0;
-const pexelsResults: Awaited<ReturnType<typeof searchAndDownloadClip>>[] = new Array(segments.length);
-
+const pexelsResults: Array<{ path: string; sourceVideoId: number; sourceUrl: string; duration: number; usedKeyword: string }> = new Array(segments.length);
 async function pexelsWorker() {
   while (true) {
     const idx = cursor++;
@@ -70,7 +67,7 @@ async function pexelsWorker() {
       });
       pexelsResults[idx] = result;
       console.log(
-        `      [seg ${seg.id}] ✅ "${result.usedKeyword}" → ${(audio.duration).toFixed(2)}s audio / clip ${result.duration}s (id=${result.sourceVideoId})`
+        `      [seg ${seg.id}] ✅ "${result.usedKeyword}" → ${audio.duration.toFixed(2)}s audio / clip ${result.duration}s`
       );
     } catch (e) {
       console.error(`      [seg ${seg.id}] ❌ ${(e as Error).message}`);
@@ -81,71 +78,84 @@ async function pexelsWorker() {
 await Promise.all(Array.from({ length: PEXELS_CONCURRENCY }, () => pexelsWorker()));
 console.log(`      ✅ Pexels done in ${((Date.now() - ct0) / 1000).toFixed(0)}s`);
 
-// PHASE 3 — copy assets to public/ + assemble resolved segments
-console.log(`\n[3/4] Staging assets in public/...`);
-const resolved: ResolvedSegment[] = [];
-for (let i = 0; i < segments.length; i++) {
-  const seg = segments[i];
-  const narration = narrations.find((n) => n.id === seg.id)!;
-  const pexels = pexelsResults[i];
-  const audioBase = basename(narration.audioPath);
-  const audioExt = audioBase.endsWith(".wav") ? "wav" : "mp3";
-  const audioPublicName = `narration-${seg.id}.${audioExt}`;
-  const videoPublicName = `scene-${seg.id}.mp4`;
-  await copyFile(narration.audioPath, join(PUBLIC_DIR, audioPublicName));
-  await copyFile(pexels.path, join(PUBLIC_DIR, videoPublicName));
-  resolved.push({
-    id: seg.id,
-    role: seg.role,
-    text: seg.text,
-    duration_seconds: Number((narration.duration + SCENE_TAIL_BUFFER).toFixed(3)),
-    audioFile: audioPublicName,
-    videoFile: videoPublicName,
-    words: narration.words,
-    audioDuration: narration.duration,
-    pexelsSource: {
-      videoId: pexels.sourceVideoId,
-      url: pexels.sourceUrl,
-      usedKeyword: pexels.usedKeyword,
-    },
-  });
-}
-console.log(`      ✅ ${resolved.length} segments staged`);
-
-// PHASE 4 — music + render-props
-console.log(`\n[4/4] Picking music + writing render-props...`);
+// PHASE 3 — pick music
+console.log(`\n[3/5] Picking music...`);
 const MUSIC_DIR = join(ROOT, "assets", "music", "peaceful");
-let musicFile: string | null = null;
+let musicSourcePath: string | null = null;
 try {
   const tracks = (await readdir(MUSIC_DIR)).filter((f) => /\.(mp3|wav|m4a|aac)$/i.test(f));
   if (tracks.length > 0) {
     const pick = tracks[Math.floor(Math.random() * tracks.length)];
-    const dstName = `music-${pick.replace(/\s+/g, "_")}`;
-    await copyFile(join(MUSIC_DIR, pick), join(PUBLIC_DIR, dstName));
-    musicFile = dstName;
+    musicSourcePath = join(MUSIC_DIR, pick);
     console.log(`      Music: ${pick}`);
   } else {
-    console.log(`      (no music tracks found — rendering without music)`);
+    console.log(`      (no music tracks found)`);
   }
 } catch {
-  console.log(`      (no music dir — rendering without music)`);
+  console.log(`      (no music dir)`);
 }
 
-const fps = 30;
-const totalSeconds = resolved.reduce((a, b) => a + b.duration_seconds, 0);
-const durationFrames = Math.ceil(totalSeconds * fps);
+// PHASE 4 — FFmpeg stitch B-roll + audio into ONE master video
+console.log(`\n[4/5] FFmpeg stitching ${segments.length} segments → one video...`);
+const st0 = Date.now();
+const stitch = await stitchBroll({
+  outDir: OUT_DIR,
+  segments: segments.map((s) => {
+    const n = narrations.find((x) => x.id === s.id)!;
+    const p = pexelsResults[segments.indexOf(s)];
+    return {
+      id: s.id,
+      videoPath: p.path,
+      audioPath: n.audioPath,
+      audioDuration: n.duration,
+    };
+  }),
+  musicPath: musicSourcePath,
+  musicVolume: 0.05,
+  width: TARGET_WIDTH,
+  height: TARGET_HEIGHT,
+  fps: TARGET_FPS,
+  tailBufferSeconds: SCENE_TAIL_BUFFER,
+});
+console.log(`      ✅ Stitched in ${((Date.now() - st0) / 1000).toFixed(0)}s → ${stitch.outPath}`);
+
+// PHASE 5 — copy stitched video to public/ + compute GLOBAL caption timings
+console.log(`\n[5/5] Staging stitched video + computing global caption timings...`);
+const stitchedPublicName = "stitched-broll.mp4";
+await copyFile(stitch.outPath, join(PUBLIC_DIR, stitchedPublicName));
+
+// Build global word timings: offset each segment's local words by cumulative segment start
+const globalWords: CaptionWord[] = [];
+let cumulative = 0;
+for (const seg of segments) {
+  const narration = narrations.find((n) => n.id === seg.id)!;
+  for (const w of narration.words) {
+    globalWords.push({
+      word: w.word,
+      start: cumulative + w.start,
+      end: cumulative + w.end,
+    });
+  }
+  cumulative += narration.duration + SCENE_TAIL_BUFFER;
+}
+
+const totalSeconds = stitch.totalSeconds;
+const durationFrames = Math.ceil(totalSeconds * TARGET_FPS);
+
 const renderProps = {
-  segments: resolved,
-  musicFile,
-  musicVolume: 0.05, // very low for wellness — narrator is hero
-  fps,
+  /** Single stitched video file (B-roll + audio + music baked in) */
+  videoFile: stitchedPublicName,
+  /** Global word timings for the entire video */
+  words: globalWords,
+  fps: TARGET_FPS,
   durationFrames,
   totalSeconds,
+  width: TARGET_WIDTH,
+  height: TARGET_HEIGHT,
 };
 await writeFile(join(OUT_DIR, "render-props.json"), JSON.stringify(renderProps, null, 2));
 
 console.log(`\n=== Ready ===`);
-console.log(`Total duration:  ${totalSeconds.toFixed(2)}s (${(totalSeconds / 60).toFixed(2)} min)`);
-console.log(`Segments:        ${resolved.length}`);
-console.log(`Music:           ${musicFile ?? "(none)"}`);
+console.log(`Stitched video: ${stitch.outPath} (${totalSeconds.toFixed(1)}s = ${(totalSeconds / 60).toFixed(2)}min)`);
+console.log(`Global caption words: ${globalWords.length}`);
 console.log(`\nRun: npx remotion render remotion/src/index.ts Long ${OUT_DIR}/final.mp4 --props=${OUT_DIR}/render-props.json`);
