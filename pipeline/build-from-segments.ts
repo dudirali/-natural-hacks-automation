@@ -38,11 +38,12 @@ const segments: Segment[] = JSON.parse(await readFile(SEGMENTS_CONFIG, "utf8"));
 console.log(`Loaded ${segments.length} segments from ${SEGMENTS_CONFIG}`);
 
 // PHASE 1 — TTS for all segments in parallel (capped concurrency)
-console.log(`\n[1/4] TTS for ${segments.length} segments (concurrency=8)...`);
+// Concurrency 4 (not 8) — gentler on HeyGen API, fewer concurrent network connections from Railway
+console.log(`\n[1/4] TTS for ${segments.length} segments (concurrency=4)...`);
 const tt0 = Date.now();
 const narrations = await narrateSegments(segments, SEGMENTS_DIR, {
   speed: NARRATION_SPEED,
-  concurrency: 8,
+  concurrency: 4,
 });
 console.log(`      ✅ TTS done in ${((Date.now() - tt0) / 1000).toFixed(0)}s`);
 

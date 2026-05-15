@@ -50,8 +50,10 @@ export async function narrate(
 
   const speed = options.speed ?? 1.0;
 
-  // Retry-on-transient-error pattern (network timeouts under cloud egress)
-  const MAX_ATTEMPTS = 3;
+  // Retry-on-transient-error pattern. HeyGen TTS under cloud egress can stall.
+  // 5 attempts × 180s timeout each. Worst case: ~30 min per segment if EVERY attempt times out.
+  const MAX_ATTEMPTS = 5;
+  const PER_ATTEMPT_TIMEOUT_MS = 180_000;
   let res: Response | null = null;
   let body = "";
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -70,7 +72,7 @@ export async function narrate(
           speed,
           locale: v.locale ?? "en-US",
         }),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(PER_ATTEMPT_TIMEOUT_MS),
       });
       body = await res.text();
       break;
@@ -85,8 +87,11 @@ export async function narrate(
         code === "ETIMEDOUT" ||
         code === "AbortError" ||
         code === "TimeoutError";
-      if (!transient || attempt === MAX_ATTEMPTS) throw e;
-      const delay = Math.pow(2, attempt - 1) * 1500;
+      if (!transient || attempt === MAX_ATTEMPTS) {
+        console.error(`[narrate] ❌ giving up after ${attempt} attempt(s). Last error: ${code}`);
+        throw e;
+      }
+      const delay = Math.min(15_000, Math.pow(2, attempt - 1) * 2000); // 2s, 4s, 8s, 15s, 15s
       console.warn(
         `[narrate] ⚠️  attempt ${attempt}/${MAX_ATTEMPTS} failed (${code}). Retrying in ${delay}ms...`
       );
