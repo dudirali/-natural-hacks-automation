@@ -1,3 +1,9 @@
+// EARLY DIAGNOSTIC LOGGING — fires BEFORE any imports that might fail.
+// If the container crashes silently, at least we'll see "BOOT" in logs.
+console.log(`\n[BOOT] daily-run.ts starting at ${new Date().toISOString()}`);
+console.log(`[BOOT] node ${process.version} / platform=${process.platform} / cwd=${process.cwd()}`);
+console.log(`[BOOT] env presence: ANTHROPIC=${!!process.env.ANTHROPIC_API_KEY} HEYGEN=${!!process.env.HEYGEN_API_KEY} PEXELS=${!!process.env.PEXELS_API_KEY} YT_REFRESH=${!!process.env.YOUTUBE_REFRESH_TOKEN} STATE_DIR=${process.env.STATE_DIR}`);
+
 import "dotenv/config";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,6 +12,8 @@ import { pickNextTopic, markTopicUsed } from "./pick-topic.ts";
 import { generateScript } from "./generate-script.ts";
 import { generateMetadata } from "./generate-metadata.ts";
 import { uploadToYouTube } from "./youtube-upload.ts";
+
+console.log(`[BOOT] all imports loaded`);
 
 const ROOT = process.cwd();
 
