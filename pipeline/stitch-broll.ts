@@ -154,8 +154,16 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
         "-i", shellQuote(concatPath),
         "-stream_loop", "-1",
         "-i", shellQuote(opts.musicPath),
+        // Critical: dropout_transition=0 + normalize=0
+        //  - dropout_transition=2 (default) made amix crossfade out the narrator
+        //    every time he took a breath (low energy = "stream ending"), causing
+        //    audible silent moments where captions still ran.
+        //  - normalize=1 (default) divided output by sqrt(2), further reducing
+        //    narrator volume and making music inaudible.
+        // With both disabled, narrator stays at full volume; music sits at its
+        // explicit gain underneath (additive mix; amix internally clips safely).
         "-filter_complex", shellQuote(
-          `[1:a]volume=${musicVolume},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2,volume=1.2[a]`
+          `[0:a]volume=1.0[narr];[1:a]volume=${musicVolume},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)}[mus];[narr][mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
         ),
         "-map", "0:v",
         "-map", "[a]",
