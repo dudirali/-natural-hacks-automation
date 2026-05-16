@@ -94,13 +94,24 @@ async function main() {
   const captionsWebm = join(TOPIC_OUT_DIR, "captions.webm");
   const finalMp4 = join(TOPIC_OUT_DIR, "final.mp4");
   const propsPath = join(TOPIC_OUT_DIR, "render-props.json");
+  // VP9 has reliable alpha in WebM (VP8 alpha decoded as opaque, covering B-roll).
   execSync(
-    `npx remotion render remotion/src/index.ts Long ${captionsWebm} --props=${propsPath} --codec=vp8 --pixel-format=yuva420p --image-format=png`,
+    `npx remotion render remotion/src/index.ts Long ${captionsWebm} --props=${propsPath} --codec=vp9 --pixel-format=yuva420p --image-format=png`,
     { cwd: ROOT, stdio: "inherit" }
   );
   console.log(`✅ Captions WebM → ${captionsWebm}`);
 
+  // Diagnostic: verify captions WebM has alpha (pix_fmt should be yuva420p)
+  try {
+    const probe = execSync(
+      `ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt,codec_name -of csv=p=0 ${captionsWebm}`,
+      { encoding: "utf8" }
+    );
+    console.log(`[captions ffprobe] codec,pix_fmt = ${probe.trim()}`);
+  } catch {}
+
   // 4b) FFmpeg composite: stitched B-roll (with audio) ⊕ captions overlay → final.mp4
+  // Explicit format filters ensure alpha is honoured by overlay.
   logHeader("Step 4b/7 — FFmpeg composite (B-roll ⊕ captions)");
   const stitchedPath = join(ROOT, "public", "stitched-broll.mp4");
   execSync(
@@ -108,7 +119,8 @@ async function main() {
       "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
       "-i", `"${stitchedPath}"`,
       "-i", `"${captionsWebm}"`,
-      "-filter_complex", `"[0:v][1:v]overlay=0:0:shortest=1[v]"`,
+      "-filter_complex",
+      `"[0:v]format=yuv420p[bg];[1:v]format=yuva420p[fg];[bg][fg]overlay=0:0:shortest=1[v]"`,
       "-map", `"[v]"`,
       "-map", "0:a",
       "-c:v", "libx264",

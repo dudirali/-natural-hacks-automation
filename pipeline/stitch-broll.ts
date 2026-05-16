@@ -113,6 +113,10 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
     : join(opts.outDir, "stitched-broll.mp4");
 
   const t2 = Date.now();
+  // Re-encode audio (not video) during concat. With "-c copy" the AAC priming
+  // samples (~24ms per segment) at each join become audible silence/glitches
+  // — ~900ms total lost across 38 segments, drifting captions out of sync.
+  // Re-encoding audio in one pass produces a single continuous AAC stream.
   run(
     [
       "ffmpeg",
@@ -122,7 +126,11 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
       "-f", "concat",
       "-safe", "0",
       "-i", shellQuote(listPath),
-      "-c", "copy", // streams already have matching codec from PASS 1 — copy is instant
+      "-c:v", "copy",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-ar", "44100",
+      "-ac", "2",
       "-movflags", "+faststart",
       shellQuote(concatPath),
     ].join(" ")
