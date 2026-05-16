@@ -74,13 +74,15 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
       "-vf", shellQuote(
         `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},setsar=1`
       ),
+      // Pad audio with silence so it matches the full segment duration (dur).
+      // Without this, -shortest cut audio at audioDuration and the segment was
+      // 0.1s shorter than expected, drifting captions ahead of audio by ~3.8s
+      // across 38 segments (silent moments where captions appear ahead).
+      "-af", shellQuote(`apad=whole_dur=${dur}`),
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-crf", "23",
       "-pix_fmt", "yuv420p",
-      // Frequent keyframes (every 1s) so OffthreadVideo can seek per-frame
-      // without ffmpeg re-decoding long GOPs. Without this, Remotion's
-      // 33s delayRender budget expires while seeking into a 5-minute MP4.
       "-g", String(fps),
       "-keyint_min", String(fps),
       "-sc_threshold", "0",
@@ -88,7 +90,6 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
       "-b:a", "192k",
       "-ac", "2",
       "-ar", "44100",
-      "-shortest",
       "-movflags", "+faststart",
       shellQuote(outFile),
     ].join(" ");

@@ -111,7 +111,7 @@ const stitch = await stitchBroll({
     };
   }),
   musicPath: musicSourcePath,
-  musicVolume: 0.05,
+  musicVolume: 0.12,
   width: TARGET_WIDTH,
   height: TARGET_HEIGHT,
   fps: TARGET_FPS,
