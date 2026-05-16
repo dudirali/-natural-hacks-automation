@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, staticFile } from "remotion";
+import { AbsoluteFill } from "remotion";
 import { z } from "zod";
 import { CaptionsOverlay } from "./components/CaptionsOverlay";
 
@@ -10,8 +10,8 @@ export const wordSchema = z.object({
 });
 
 export const longSchema = z.object({
-  /** Single pre-stitched video file (B-roll + narration + music baked in by FFmpeg) */
-  videoFile: z.string(),
+  /** Single pre-stitched video file — referenced only for prop compatibility; not used. */
+  videoFile: z.string().optional(),
   /** Global word timestamps across the entire stitched video */
   words: z.array(wordSchema),
   fps: z.number(),
@@ -34,19 +34,15 @@ export const DEFAULT_PROPS: LongProps = {
 };
 
 /**
- * Lightweight composition: one OffthreadVideo source (FFmpeg-stitched B-roll
- * with audio baked in) + a captions overlay. This avoids the 38-source memory
- * issue that crashed Chromium on Railway.
+ * Captions-only overlay rendered to a transparent WebM (VP8 + yuva420p).
+ * The B-roll/audio is composited in by FFmpeg afterwards. This avoids
+ * Chromium having to seek-extract frames from a long stitched MP4, which
+ * caused 120s+ delayRender timeouts via OffthreadVideo on Railway.
  */
-export const Long: React.FC<LongProps> = ({ videoFile, words }) => {
+export const Long: React.FC<LongProps> = ({ words }) => {
   return (
-    <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      <OffthreadVideo
-        src={staticFile(videoFile)}
-        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-      />
-
-      {/* Vignette at bottom for caption legibility */}
+    <AbsoluteFill style={{ backgroundColor: "rgba(0,0,0,0)" }}>
+      {/* Vignette at bottom for caption legibility (semi-transparent — alpha-composited over B-roll) */}
       <AbsoluteFill
         style={{
           background:
@@ -55,7 +51,6 @@ export const Long: React.FC<LongProps> = ({ videoFile, words }) => {
         }}
       />
 
-      {/* Captions overlay using global word timings */}
       <CaptionsOverlay words={words} />
     </AbsoluteFill>
   );

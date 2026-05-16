@@ -87,17 +87,41 @@ async function main() {
     },
   });
 
-  // 4) Remotion render (Long composition)
-  logHeader("Step 4/7 — Remotion render");
+  // 4a) Remotion render — captions overlay only, transparent WebM (VP8 + alpha).
+  // No video source in the composition → no OffthreadVideo seek-per-frame
+  // timeouts on Chromium. Pure animated text on transparency, very fast.
+  logHeader("Step 4/7 — Remotion render (captions overlay)");
+  const captionsWebm = join(TOPIC_OUT_DIR, "captions.webm");
   const finalMp4 = join(TOPIC_OUT_DIR, "final.mp4");
   const propsPath = join(TOPIC_OUT_DIR, "render-props.json");
-  // --timeout: raise delayRender budget so OffthreadVideo seeking into a long
-  // stitched MP4 doesn't expire while ffmpeg extracts a frame (default 30s).
   execSync(
-    `npx remotion render remotion/src/index.ts Long ${finalMp4} --props=${propsPath} --timeout=120000`,
+    `npx remotion render remotion/src/index.ts Long ${captionsWebm} --props=${propsPath} --codec=vp8 --pixel-format=yuva420p`,
     { cwd: ROOT, stdio: "inherit" }
   );
-  console.log(`✅ Rendered → ${finalMp4}`);
+  console.log(`✅ Captions WebM → ${captionsWebm}`);
+
+  // 4b) FFmpeg composite: stitched B-roll (with audio) ⊕ captions overlay → final.mp4
+  logHeader("Step 4b/7 — FFmpeg composite (B-roll ⊕ captions)");
+  const stitchedPath = join(ROOT, "public", "stitched-broll.mp4");
+  execSync(
+    [
+      "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+      "-i", `"${stitchedPath}"`,
+      "-i", `"${captionsWebm}"`,
+      "-filter_complex", `"[0:v][1:v]overlay=0:0:shortest=1[v]"`,
+      "-map", `"[v]"`,
+      "-map", "0:a",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "23",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "copy",
+      "-movflags", "+faststart",
+      `"${finalMp4}"`,
+    ].join(" "),
+    { cwd: ROOT, stdio: "inherit" }
+  );
+  console.log(`✅ Final → ${finalMp4}`);
 
   // 5) Generate YouTube metadata
   logHeader("Step 5/7 — Generate YouTube metadata");
