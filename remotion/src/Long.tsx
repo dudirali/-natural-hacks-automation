@@ -34,15 +34,21 @@ export const DEFAULT_PROPS: LongProps = {
 };
 
 /**
- * Captions-only overlay rendered to a transparent WebM (VP8 + yuva420p).
- * The B-roll/audio is composited in by FFmpeg afterwards. This avoids
- * Chromium having to seek-extract frames from a long stitched MP4, which
- * caused 120s+ delayRender timeouts via OffthreadVideo on Railway.
+ * Captions-only overlay rendered against a chroma-key background (magenta
+ * #FF00FF). FFmpeg removes the magenta to transparency via the colorkey
+ * filter, then overlays onto the stitched B-roll. We use chroma-key rather
+ * than alpha-WebM because VP8/VP9 alpha encoding via Remotion CLI silently
+ * dropped the alpha channel to yuv420p on Railway.
+ *
+ * Pure magenta is safe: captions are white/yellow text on near-black pill,
+ * vignette is grayscale gradient → no risk of color collision.
  */
+const CHROMA = "#FF00FF";
+
 export const Long: React.FC<LongProps> = ({ words }) => {
   return (
-    <AbsoluteFill style={{ backgroundColor: "rgba(0,0,0,0)" }}>
-      {/* Vignette at bottom for caption legibility (semi-transparent — alpha-composited over B-roll) */}
+    <AbsoluteFill style={{ backgroundColor: CHROMA }}>
+      {/* Vignette at bottom for caption legibility */}
       <AbsoluteFill
         style={{
           background:
