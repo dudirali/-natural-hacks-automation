@@ -48,11 +48,15 @@ export async function searchAndDownloadClip(opts: {
   outDir: string;
   outFile: string; // basename, e.g. "scene-1.mp4"
   criteria: PickCriteria;
+  /** IDs that have already been used too many times in this video — skip them. */
+  excludeVideoIds?: Set<number>;
 }): Promise<{ path: string; sourceVideoId: number; sourceUrl: string; duration: number; usedKeyword: string }> {
   if (!PEXELS_API_KEY) throw new Error("PEXELS_API_KEY missing in .env");
   if (!opts.keywords.length) throw new Error("No keywords provided");
 
   await mkdir(opts.outDir, { recursive: true });
+
+  const exclude = opts.excludeVideoIds ?? new Set<number>();
 
   for (const keyword of opts.keywords) {
     const url = new URL(SEARCH_URL);
@@ -70,14 +74,14 @@ export async function searchAndDownloadClip(opts: {
     }
     const data = (await res.json()) as PexelsSearchResponse;
     const candidates = (data.videos ?? []).filter(
-      (v) => v.duration >= opts.criteria.minDurationSeconds + 0.5
+      (v) => v.duration >= opts.criteria.minDurationSeconds + 0.5 && !exclude.has(v.id)
     );
     if (candidates.length === 0) {
-      console.warn(`  [pexels] "${keyword}" → no clips >= ${opts.criteria.minDurationSeconds}s`);
+      console.warn(`  [pexels] "${keyword}" → no fresh clips (after exclusion)`);
       continue;
     }
 
-    // Pick the first candidate. Pexels returns most-relevant first.
+    // Pick the first non-excluded candidate. Pexels returns most-relevant first.
     const pick = candidates[0];
 
     // Inside the pick, choose the highest-quality 1080p+ mp4 file

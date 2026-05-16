@@ -45,37 +45,41 @@ const narrations = await narrateSegments(segments, SEGMENTS_DIR, {
 });
 console.log(`      ✅ TTS done in ${((Date.now() - tt0) / 1000).toFixed(0)}s`);
 
-// PHASE 2 — Pexels per segment, parallel
-console.log(`\n[2/5] Searching + downloading Pexels clips...`);
+// PHASE 2 — Pexels per segment, SEQUENTIAL so we can enforce a per-video
+// usage cap and not pick the same clip more than twice in a single video.
+// (Parallel workers can't share an up-to-date exclude set without coordination.)
+console.log(`\n[2/5] Searching + downloading Pexels clips (seq, max 2× same clip)...`);
 const ct0 = Date.now();
-const PEXELS_CONCURRENCY = 6;
-let cursor = 0;
+const MAX_REPEATS_PER_CLIP = 2;
 const pexelsResults: Array<{ path: string; sourceVideoId: number; sourceUrl: string; duration: number; usedKeyword: string }> = new Array(segments.length);
-async function pexelsWorker() {
-  while (true) {
-    const idx = cursor++;
-    if (idx >= segments.length) return;
-    const seg = segments[idx];
-    const audio = narrations.find((n) => n.id === seg.id)!;
-    const sceneDur = audio.duration + SCENE_TAIL_BUFFER;
-    try {
-      const result = await searchAndDownloadClip({
-        keywords: seg.visual_keywords,
-        outDir: join(SEGMENTS_DIR, String(seg.id)),
-        outFile: "video.mp4",
-        criteria: { minDurationSeconds: sceneDur, orientation: "landscape" },
-      });
-      pexelsResults[idx] = result;
-      console.log(
-        `      [seg ${seg.id}] ✅ "${result.usedKeyword}" → ${audio.duration.toFixed(2)}s audio / clip ${result.duration}s`
-      );
-    } catch (e) {
-      console.error(`      [seg ${seg.id}] ❌ ${(e as Error).message}`);
-      throw e;
-    }
+const useCount = new Map<number, number>();
+for (let idx = 0; idx < segments.length; idx++) {
+  const seg = segments[idx];
+  const audio = narrations.find((n) => n.id === seg.id)!;
+  const sceneDur = audio.duration + SCENE_TAIL_BUFFER;
+  const excludeVideoIds = new Set<number>();
+  for (const [id, count] of useCount) {
+    if (count >= MAX_REPEATS_PER_CLIP) excludeVideoIds.add(id);
+  }
+  try {
+    const result = await searchAndDownloadClip({
+      keywords: seg.visual_keywords,
+      outDir: join(SEGMENTS_DIR, String(seg.id)),
+      outFile: "video.mp4",
+      criteria: { minDurationSeconds: sceneDur, orientation: "landscape" },
+      excludeVideoIds,
+    });
+    pexelsResults[idx] = result;
+    useCount.set(result.sourceVideoId, (useCount.get(result.sourceVideoId) ?? 0) + 1);
+    const count = useCount.get(result.sourceVideoId)!;
+    console.log(
+      `      [seg ${seg.id}] ✅ "${result.usedKeyword}" id=${result.sourceVideoId} (use ${count}/${MAX_REPEATS_PER_CLIP}) — audio ${audio.duration.toFixed(2)}s / clip ${result.duration}s`
+    );
+  } catch (e) {
+    console.error(`      [seg ${seg.id}] ❌ ${(e as Error).message}`);
+    throw e;
   }
 }
-await Promise.all(Array.from({ length: PEXELS_CONCURRENCY }, () => pexelsWorker()));
 console.log(`      ✅ Pexels done in ${((Date.now() - ct0) / 1000).toFixed(0)}s`);
 
 // PHASE 3 — pick music
@@ -111,7 +115,7 @@ const stitch = await stitchBroll({
     };
   }),
   musicPath: musicSourcePath,
-  musicVolume: 0.25,
+  musicVolume: 0.7,
   width: TARGET_WIDTH,
   height: TARGET_HEIGHT,
   fps: TARGET_FPS,

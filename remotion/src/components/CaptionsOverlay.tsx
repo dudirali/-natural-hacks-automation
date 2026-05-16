@@ -25,6 +25,11 @@ interface Props {
 // subtle pop-in (no rotation — calm wellness vibe, not viral shorts energy).
 const MAX_WORDS_PER_CHUNK = 6;
 
+// Cap how long a chunk stays on screen waiting for the next chunk. If TTS
+// pauses longer than this between chunks (period, comma, breath), the chunk
+// disappears so we don't show captions while the narrator is silent.
+const MAX_HOLD_PAUSE_SECONDS = 0.35;
+
 function groupIntoChunks(words: Word[]): Chunk[] {
   const chunks: Chunk[] = [];
   let current: Word[] = [];
@@ -44,7 +49,15 @@ function groupIntoChunks(words: Word[]): Chunk[] {
     if (endsWithStrongPunct || current.length >= MAX_WORDS_PER_CHUNK) flush();
   }
   flush();
-  for (let i = 0; i < chunks.length - 1; i++) chunks[i].end = chunks[i + 1].start;
+  // Extend each chunk's end to the next chunk's start — but only if the
+  // pause is short. Long pauses leave a captions-off gap matching the
+  // narrator's actual silence.
+  for (let i = 0; i < chunks.length - 1; i++) {
+    const naturalEnd = chunks[i].end;
+    const nextStart = chunks[i + 1].start;
+    const gap = nextStart - naturalEnd;
+    chunks[i].end = gap <= MAX_HOLD_PAUSE_SECONDS ? nextStart : naturalEnd;
+  }
   return chunks;
 }
 
