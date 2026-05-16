@@ -95,7 +95,7 @@ async function main() {
   const finalMp4 = join(TOPIC_OUT_DIR, "final.mp4");
   const propsPath = join(TOPIC_OUT_DIR, "render-props.json");
   execSync(
-    `npx remotion render remotion/src/index.ts Long ${captionsWebm} --props=${propsPath} --codec=vp8 --pixel-format=yuva420p`,
+    `npx remotion render remotion/src/index.ts Long ${captionsWebm} --props=${propsPath} --codec=vp8 --pixel-format=yuva420p --image-format=png`,
     { cwd: ROOT, stdio: "inherit" }
   );
   console.log(`✅ Captions WebM → ${captionsWebm}`);
