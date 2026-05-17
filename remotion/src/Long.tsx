@@ -10,7 +10,6 @@ import { CanvasDecorations } from "./components/template/CanvasDecorations";
 import { ProgressBar } from "./components/template/ProgressBar";
 import { SectionBadge } from "./components/template/SectionBadge";
 import { ComingUpCard } from "./components/template/ComingUpCard";
-import { PreviewBurst } from "./components/template/PreviewBurst";
 import { SubscribePopup } from "./components/SubscribePopup";
 import { EndScreen } from "./components/EndScreen";
 import { AnimationDispatcher, animationSchema } from "./components/animations";
@@ -144,11 +143,6 @@ export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations, vid
         <SubscribePopup appearAt={28} duration={5} />
       </ConditionalOverlay>
       <EndScreen totalSeconds={total} windowSeconds={8} />
-
-      {/* PreviewBurst lives on TOP for the first 2.6s — opaque title burst
-          that flashes the hook + the upcoming section titles. The narrator's
-          hook line plays underneath as the audio companion. */}
-      <PreviewBurst hook={title} sections={secs} duration={2.6} />
     </AbsoluteFill>
   );
 };
