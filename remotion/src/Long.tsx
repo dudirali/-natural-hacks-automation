@@ -6,6 +6,7 @@ import { TopBanner, TOP_BANNER_HEIGHT } from "./components/template/TopBanner";
 import { BottomBanner, BOTTOM_BANNER_HEIGHT } from "./components/template/BottomBanner";
 import { CanvasBackground } from "./components/template/CanvasBackground";
 import { CircleMask } from "./components/template/CircleMask";
+import { CanvasDecorations } from "./components/template/CanvasDecorations";
 import { SubscribePopup } from "./components/SubscribePopup";
 import { EndScreen } from "./components/EndScreen";
 import { AnimationDispatcher, animationSchema } from "./components/animations";
@@ -50,15 +51,23 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const CANVAS_TOP = TOP_BANNER_HEIGHT;
 const CANVAS_BOTTOM = HEIGHT - BOTTOM_BANNER_HEIGHT;
-const CIRCLE_R = 220;
+// Enlarged circle for B-roll. Matches PASS 1's crop+pad (520x520 placed at
+// x=20, y=100 in stitched-broll.mp4) so the subject lands centered.
+const CIRCLE_R = 260;
 const CIRCLE_CX = 280;
 const CIRCLE_CY = (CANVAS_TOP + CANVAS_BOTTOM) / 2;
-// Captions box on the right of the canvas
+// Captions box on the right of the canvas (shifted right to clear the larger circle)
 const CAPTIONS_BOX = {
-  left: CIRCLE_CX + CIRCLE_R + 40, // start right of circle
-  top: CANVAS_TOP + 20,
+  left: CIRCLE_CX + CIRCLE_R + 40,
+  top: CANVAS_TOP + 140, // leaves room for the big chunk-emoji card above
   right: WIDTH - 40,
-  bottom: CANVAS_BOTTOM - 20,
+  bottom: CANVAS_BOTTOM - 40,
+};
+const CANVAS_BOX = {
+  left: 0,
+  top: CANVAS_TOP,
+  right: WIDTH,
+  bottom: CANVAS_BOTTOM,
 };
 
 /**
@@ -87,6 +96,9 @@ export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations, vid
 
       {/* 3: Circular chroma porthole on the left for B-roll */}
       <CircleMask cx={CIRCLE_CX} cy={CIRCLE_CY} r={CIRCLE_R} />
+
+      {/* 3b: Always-present canvas decorations + per-chunk big icon card */}
+      <CanvasDecorations words={words} captionBox={CAPTIONS_BOX} canvasBox={CANVAS_BOX} />
 
       {/* 4: Captions on the right side of canvas (black text) */}
       <CanvasCaptions words={words} box={CAPTIONS_BOX} />

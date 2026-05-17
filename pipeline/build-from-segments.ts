@@ -101,8 +101,96 @@ try {
   console.log(`      (no music dir)`);
 }
 
+// === Pre-stitch: compute global word timings, animations, and SFX events ===
+// Animations and SFX both need timings, so we compute everything BEFORE stitch
+// (PASS 3 then mixes everything in one go).
+const SFX_DIR = join(ROOT, "assets", "sfx");
+const sfxFiles = {
+  impact: join(SFX_DIR, "sfx-impact.mp3"),
+  click: join(SFX_DIR, "sfx-click.mp3"),
+  twinkle: join(SFX_DIR, "sfx-twinkle.mp3"),
+  success: join(SFX_DIR, "sfx-success.mp3"),
+  pop: join(SFX_DIR, "sfx-pop.mp3"),
+  swoosh: join(SFX_DIR, "sfx-swoosh-light.mp3"),
+  rise: join(SFX_DIR, "sfx-rise.mp3"),
+  shine: join(SFX_DIR, "sfx-shine.mp3"),
+};
+
+// Global word timeline (segment-cumulative).
+const globalWordTimings: Array<{ word: string; start: number; end: number }> = [];
+const segmentTimingsForAnim: Array<{ id: number; start: number; end: number }> = [];
+{
+  let cum = 0;
+  for (const seg of segments) {
+    const n = narrations.find((x) => x.id === seg.id)!;
+    const segStart = cum;
+    for (const w of n.words) {
+      globalWordTimings.push({ word: w.word, start: cum + w.start, end: cum + w.end });
+    }
+    cum += n.duration + SCENE_TAIL_BUFFER;
+    segmentTimingsForAnim.push({ id: seg.id, start: segStart, end: cum });
+  }
+}
+const totalSecondsPlan = segmentTimingsForAnim[segmentTimingsForAnim.length - 1]?.end ?? 0;
+
+// Generate animations BEFORE stitch so we know their timings for SFX.
+console.log(`\n[3.5/5] Generating animations from script (Claude motion-graphics director)...`);
+const at0 = Date.now();
+let animations: Awaited<ReturnType<typeof generateAnimations>> = [];
+try {
+  animations = await generateAnimations(segments, segmentTimingsForAnim);
+  console.log(`      ✅ ${animations.length} animations in ${((Date.now() - at0) / 1000).toFixed(0)}s`);
+  for (const a of animations) {
+    console.log(`         ${a.start.toFixed(1)}s +${a.duration}s  ${a.data.type}`);
+  }
+} catch (e) {
+  console.warn(`      ⚠️  animations generation failed: ${(e as Error).message.slice(0, 120)} — continuing without`);
+}
+
+// Emphasis word SFX
+const EMPH = /^(\d+%?|\d+(?:st|nd|rd|th)|warning|never|always|secret|hidden|study|research|proven|shocking|dangerous|crucial|critical|deadly|stop|avoid|doctors?|scientists?)[.,!?:;]?$/i;
+const emphTimes = globalWordTimings.filter((w) => EMPH.test(w.word)).map((w) => w.start);
+const filteredEmph: number[] = [];
+for (const t of emphTimes) {
+  if (filteredEmph.length >= 12) break;
+  if (filteredEmph.length === 0 || t - filteredEmph[filteredEmph.length - 1] >= 4) {
+    filteredEmph.push(t);
+  }
+}
+
+// Map each animation TYPE to its "punch in" SFX
+const animSfxFor = (type: string) => {
+  switch (type) {
+    case "warning_card": return sfxFiles.impact;
+    case "stat_callout": return sfxFiles.rise;
+    case "number_reveal": return sfxFiles.pop;
+    case "process_steps": return sfxFiles.click;
+    case "quote_callout": return sfxFiles.shine;
+    case "comparison_split": return sfxFiles.swoosh;
+    case "bullet_list": return sfxFiles.click;
+    default: return sfxFiles.pop;
+  }
+};
+
+const sfxEvents: Array<{ time: number; sfxPath: string; volume?: number }> = [
+  // Emphasis words (impact, throttled, max 12)
+  ...filteredEmph.map((t) => ({ time: t, sfxPath: sfxFiles.impact, volume: 0.38 })),
+  // Animation entry SFX
+  ...animations.map((a) => ({ time: a.start, sfxPath: animSfxFor(a.data.type), volume: 0.50 })),
+  // Animation exit (subtle swoosh 0.3s before end)
+  ...animations.map((a) => ({ time: a.start + a.duration - 0.3, sfxPath: sfxFiles.swoosh, volume: 0.35 })),
+  // Subscribe popup at 28s
+  { time: 28.05, sfxPath: sfxFiles.twinkle, volume: 0.40 },
+  // End screen — success chime ~0.2s after fade-in
+  { time: Math.max(0, totalSecondsPlan - 7.8), sfxPath: sfxFiles.success, volume: 0.42 },
+];
+console.log(
+  `      sfx plan: ${filteredEmph.length} emphasis + ${animations.length * 2} anim in/out + 2 popups + 37 whooshes`
+);
+
 // PHASE 4 — FFmpeg stitch B-roll + audio into ONE master video
 console.log(`\n[4/5] FFmpeg stitching ${segments.length} segments → one video...`);
+
 const st0 = Date.now();
 const stitch = await stitchBroll({
   outDir: OUT_DIR,
@@ -122,6 +210,7 @@ const stitch = await stitchBroll({
   height: TARGET_HEIGHT,
   fps: TARGET_FPS,
   tailBufferSeconds: SCENE_TAIL_BUFFER,
+  sfxEvents,
 });
 console.log(`      ✅ Stitched in ${((Date.now() - st0) / 1000).toFixed(0)}s → ${stitch.outPath}`);
 
@@ -181,30 +270,7 @@ for (const seg of segments) {
 const totalSeconds = stitch.totalSeconds;
 const durationFrames = Math.ceil(totalSeconds * TARGET_FPS);
 
-// PHASE 5b — Generate animations / infographics that replace B-roll in their
-// windows. Claude reads the script + cumulative timings and produces ~10-15
-// animations distributed across the video.
-console.log(`\n[5b/5] Generating animations from script (Claude motion-graphics director)...`);
-const at0 = Date.now();
-const segmentTimings: Array<{ id: number; start: number; end: number }> = [];
-let cumT = 0;
-for (const seg of segments) {
-  const n = narrations.find((x) => x.id === seg.id)!;
-  const segStart = cumT;
-  cumT += n.duration + SCENE_TAIL_BUFFER;
-  segmentTimings.push({ id: seg.id, start: segStart, end: cumT });
-}
-let animations: Awaited<ReturnType<typeof generateAnimations>> = [];
-try {
-  animations = await generateAnimations(segments, segmentTimings);
-  console.log(`      ✅ ${animations.length} animations generated in ${((Date.now() - at0) / 1000).toFixed(0)}s`);
-  for (const a of animations) {
-    console.log(`         ${a.start.toFixed(1)}s +${a.duration}s  ${a.data.type}`);
-  }
-} catch (e) {
-  console.warn(`      ⚠️  animations generation failed: ${(e as Error).message.slice(0, 120)} — continuing without animations`);
-}
-
+// Animations were already generated before stitch (so SFX could be timed to them).
 const renderProps = {
   /** Single stitched video file (B-roll + audio + music baked in) */
   videoFile: stitchedPublicName,

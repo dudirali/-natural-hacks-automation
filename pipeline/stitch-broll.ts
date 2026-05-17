@@ -12,6 +12,15 @@ import { execSync } from "node:child_process";
  * This avoids the single-filter_complex-with-76-inputs approach that OOM'd Railway.
  */
 
+export interface SfxEvent {
+  /** Global time (seconds) to play this SFX. */
+  time: number;
+  /** Absolute path to the SFX mp3 file. */
+  sfxPath: string;
+  /** Mix volume 0-1. Defaults to 0.5. */
+  volume?: number;
+}
+
 export interface StitchInput {
   outDir: string;
   segments: Array<{
@@ -26,6 +35,8 @@ export interface StitchInput {
   height?: number;
   fps?: number;
   tailBufferSeconds?: number;
+  /** Optional extra SFX events on top of the per-cut whoosh defaults. */
+  sfxEvents?: SfxEvent[];
 }
 
 export interface StitchResult {
@@ -96,12 +107,21 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
     const kenBurns = `zoompan=z='min(zoom+${zoomIncr},${zoomCap})':d=1:x='${zoomX}':y='${zoomY}':s=${width}x${height}:fps=${fps}`;
     // Warm grade: slight saturation lift + tilt toward red (gamma_r > 1, gamma_b < 1).
     const grade = `eq=saturation=1.10:gamma=0.97:gamma_r=1.03:gamma_g=0.99:gamma_b=0.96`;
-    // Subtle vignette (radial darkening) — angle controls strength.
-    const vig = `vignette=PI/5.5`;
     // Fade in/out (0.15s) — smooth dip-to-black at segment boundaries.
     const fadeOutStart = Math.max(0, durNum - 0.15).toFixed(3);
     const fade = `fade=t=in:st=0:d=0.15,fade=t=out:st=${fadeOutStart}:d=0.15`;
-    const vfChain = [kenBurns, grade, vig, fade, "setsar=1"].join(",");
+    // === Center subject in the canvas circle ===
+    // The Remotion template shows the B-roll only through a circular mask
+    // at cx=280, cy=360, r=260 in a 1280x720 frame. So the visible 520x520
+    // square sits at x=20-540, y=100-620 of the underlying stitched-broll.
+    // We crop the zoompan output to its CENTER 520x520 (preserves the
+    // ken-burns'd subject) and pad it onto a 1280x720 black canvas at the
+    // matching offset, so the chroma-key circle reveals the subject centered.
+    const CIRCLE_SIZE = 520;
+    const PAD_X = 20;
+    const PAD_Y = 100;
+    const centerInCircle = `crop=${CIRCLE_SIZE}:${CIRCLE_SIZE},pad=${width}:${height}:${PAD_X}:${PAD_Y}:color=black`;
+    const vfChain = [kenBurns, grade, fade, centerInCircle, "setsar=1"].join(",");
 
     const cmd = [
       "ffmpeg",
@@ -210,48 +230,89 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
     console.warn(`[stitch] narrator silence scan failed: ${(e as Error).message.slice(0, 100)}`);
   }
 
-  // Build optional SFX track: a silent base + whoosh sounds placed at each
-  // segment boundary. Tier-3 audio polish — adds tempo / "produced" feel.
+  // Build SFX track from event list: silent base + multiple SFX placed at
+  // their exact timestamps. Defaults: whoosh on each segment cut. Caller can
+  // pass additional events (animation pops, emphasis hits, etc).
   const ROOT = process.cwd();
-  const whooshPath = join(ROOT, "assets", "sfx", "whoosh.mp3");
+  const SFX_DIR = join(ROOT, "assets", "sfx");
   let sfxTrackPath: string | null = null;
   try {
     const { existsSync } = await import("node:fs");
-    if (existsSync(whooshPath) && opts.segments.length > 1) {
-      sfxTrackPath = join(tmpDir, "sfx-track.wav");
-      // Whoosh start times: 0.3s BEFORE each cut so the peak hits at the cut.
-      const cuts: number[] = [];
+
+    // Compose events: default whoosh on every cut + caller-supplied extras.
+    const defaultWhoosh = join(SFX_DIR, "sfx-whoosh.mp3");
+    const events: SfxEvent[] = [];
+    if (existsSync(defaultWhoosh) && opts.segments.length > 1) {
       let acc = 0;
       for (let i = 0; i < opts.segments.length - 1; i++) {
         acc += segDurations[i];
-        cuts.push(Math.max(0, acc - 0.3));
+        events.push({ time: Math.max(0, acc - 0.3), sfxPath: defaultWhoosh, volume: 0.5 });
       }
-      // Build filter: split the whoosh into N copies, delay each, mix with silence base.
-      const N = cuts.length;
-      const splitLabels = cuts.map((_, i) => `[w${i}]`).join("");
-      const delays = cuts
-        .map(
-          (t, i) =>
-            `[w${i}]adelay=${(t * 1000).toFixed(0)}|${(t * 1000).toFixed(0)}[d${i}]`
-        )
-        .join(";");
-      const mixIns = ["[0:a]", ...cuts.map((_, i) => `[d${i}]`)].join("");
-      const sfxFilter = `[1:a]asplit=${N}${splitLabels};${delays};${mixIns}amix=inputs=${N + 1}:duration=longest:normalize=0`;
+    }
+    if (opts.sfxEvents) {
+      for (const e of opts.sfxEvents) {
+        if (existsSync(e.sfxPath)) events.push(e);
+      }
+    }
+
+    if (events.length > 0) {
+      sfxTrackPath = join(tmpDir, "sfx-track.wav");
+
+      // Group events by source file → asplit each file into N copies, adelay each, mix.
+      const byFile = new Map<string, Array<{ time: number; volume: number }>>();
+      for (const e of events) {
+        const list = byFile.get(e.sfxPath) ?? [];
+        list.push({ time: e.time, volume: e.volume ?? 0.5 });
+        byFile.set(e.sfxPath, list);
+      }
+      const uniqueFiles = Array.from(byFile.keys());
+
+      // FFmpeg inputs: silence base [0] + each unique SFX file [1..N]
+      const inputArgs: string[] = [
+        "-f", "lavfi", "-t", totalSeconds.toFixed(3),
+        "-i", "anullsrc=r=44100:cl=stereo",
+      ];
+      for (const f of uniqueFiles) inputArgs.push("-i", shellQuote(f));
+
+      // Build filter graph
+      const filterParts: string[] = [];
+      const finalMixLabels: string[] = ["[0:a]"];
+      for (let fIdx = 0; fIdx < uniqueFiles.length; fIdx++) {
+        const occurrences = byFile.get(uniqueFiles[fIdx])!;
+        const inputLabel = `[${fIdx + 1}:a]`;
+        const splitLabels = occurrences.map((_, i) => `[f${fIdx}_${i}]`).join("");
+        filterParts.push(`${inputLabel}asplit=${occurrences.length}${splitLabels}`);
+        for (let eIdx = 0; eIdx < occurrences.length; eIdx++) {
+          const e = occurrences[eIdx];
+          const ms = (e.time * 1000).toFixed(0);
+          const lbl = `d${fIdx}_${eIdx}`;
+          filterParts.push(
+            `[f${fIdx}_${eIdx}]adelay=${ms}|${ms},volume=${e.volume},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${lbl}]`
+          );
+          finalMixLabels.push(`[${lbl}]`);
+        }
+      }
+      const totalStreams = finalMixLabels.length;
+      filterParts.push(
+        `${finalMixLabels.join("")}amix=inputs=${totalStreams}:duration=longest:normalize=0`
+      );
+      const sfxFilter = filterParts.join(";");
+
       run(
         [
           "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-          "-f", "lavfi", "-t", totalSeconds.toFixed(3),
-          "-i", "anullsrc=r=44100:cl=stereo",
-          "-i", shellQuote(whooshPath),
+          ...inputArgs,
           "-filter_complex", shellQuote(sfxFilter),
           "-ar", "44100", "-ac", "2",
           shellQuote(sfxTrackPath),
         ].join(" ")
       );
-      console.log(`[stitch] sfx track built (${N} whooshes)`);
+      console.log(
+        `[stitch] sfx track built — ${events.length} events across ${uniqueFiles.length} unique sounds`
+      );
     }
   } catch (e) {
-    console.warn(`[stitch] sfx build failed: ${(e as Error).message.slice(0, 120)}`);
+    console.warn(`[stitch] sfx build failed: ${(e as Error).message.slice(0, 200)}`);
     sfxTrackPath = null;
   }
 
