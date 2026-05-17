@@ -25,10 +25,14 @@ interface Props {
 // subtle pop-in (no rotation — calm wellness vibe, not viral shorts energy).
 const MAX_WORDS_PER_CHUNK = 6;
 
-// Cap how long a chunk stays on screen waiting for the next chunk. If TTS
-// pauses longer than this between chunks (period, comma, breath), the chunk
-// disappears so we don't show captions while the narrator is silent.
-const MAX_HOLD_PAUSE_SECONDS = 0.35;
+// If TTS pauses longer than this between two consecutive words, force a
+// chunk boundary there so the current chunk can disappear during the
+// silence. Without this, a long mid-sentence pause kept captions on
+// screen while the narrator was silent.
+const PAUSE_SPLIT_SECONDS = 0.25;
+// How long a chunk may overrun its last word waiting for the next chunk.
+// Shorter = tighter sync with audio; longer = less flicker.
+const MAX_HOLD_PAUSE_SECONDS = 0.2;
 
 function groupIntoChunks(words: Word[]): Chunk[] {
   const chunks: Chunk[] = [];
@@ -44,14 +48,18 @@ function groupIntoChunks(words: Word[]): Chunk[] {
     current = [];
   };
   for (const w of words) {
+    // Long pause from the previous word? End the chunk so it disappears.
+    if (current.length > 0) {
+      const prevEnd = current[current.length - 1].end;
+      if (w.start - prevEnd >= PAUSE_SPLIT_SECONDS) flush();
+    }
     current.push(w);
     const endsWithStrongPunct = /[.!?]$/.test(w.word);
     if (endsWithStrongPunct || current.length >= MAX_WORDS_PER_CHUNK) flush();
   }
   flush();
-  // Extend each chunk's end to the next chunk's start — but only if the
-  // pause is short. Long pauses leave a captions-off gap matching the
-  // narrator's actual silence.
+  // Smooth tiny gaps between chunks (< MAX_HOLD_PAUSE_SECONDS); leave longer
+  // gaps as captions-off pauses matching the narrator's actual silence.
   for (let i = 0; i < chunks.length - 1; i++) {
     const naturalEnd = chunks[i].end;
     const nextStart = chunks[i + 1].start;

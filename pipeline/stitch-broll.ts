@@ -154,20 +154,13 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
         "-i", shellQuote(concatPath),
         "-stream_loop", "-1",
         "-i", shellQuote(opts.musicPath),
-        // Music processing:
-        //  - loudnorm normalizes music to a fixed integrated loudness (-18 LUFS)
-        //    so the procedurally-generated track sits at a consistent, audible
-        //    level regardless of how quiet its raw RMS happens to be.
-        //  - sidechaincompress ducks music under narrator: when narrator is loud,
-        //    music drops; when narrator is quiet, music rises. Threshold/ratio
-        //    chosen so music stays audible (-15dB) during speech and full level
-        //    in pauses.
-        // amix: dropout_transition=0 (don't fade narrator during breaths) +
-        //       normalize=0 (don't apply automatic -3dB).
+        // Music source is now at -16 LUFS (broadcast level), so no loudnorm
+        // needed. Sidechain ducking under narrator + dropout_transition=0 +
+        // normalize=0. musicVolume sets the static reduction below narrator.
         "-filter_complex", shellQuote(
           `[0:a]volume=1.0,asplit=2[narr1][narr_sc];` +
-          `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},loudnorm=I=-18:LRA=11:TP=-1.5,volume=${musicVolume}[mus_raw];` +
-          `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=400:makeup=1[mus_ducked];` +
+          `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},volume=${musicVolume}[mus_raw];` +
+          `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=400:makeup=1[mus_ducked];` +
           `[narr1][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
         ),
         "-map", "0:v",
