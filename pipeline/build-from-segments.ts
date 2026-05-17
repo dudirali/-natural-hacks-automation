@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { readFile, writeFile, mkdir, copyFile, readdir } from "node:fs/promises";
 import { join, basename } from "node:path";
+import { execSync } from "node:child_process";
 import { narrateSegments } from "./narrate-segments.ts";
 import { searchAndDownloadClip } from "./pexels.ts";
 import { stitchBroll } from "./stitch-broll.ts";
