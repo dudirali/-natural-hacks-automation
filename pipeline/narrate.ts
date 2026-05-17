@@ -116,18 +116,65 @@ export async function narrate(
   if (!data?.audio_url) throw new Error(`No audio_url in TTS response: ${body.slice(0, 300)}`);
 
   await mkdir(outDir, { recursive: true });
-  const audioRes = await fetch(data.audio_url);
-  const buf = Buffer.from(await audioRes.arrayBuffer());
+
+  // Download with integrity check. Retry up to 3 times if the downloaded
+  // file's actual duration (per ffprobe) is more than 0.5s shorter than
+  // HeyGen's claimed duration — this catches network-truncated downloads
+  // that would otherwise leave silent gaps in the stitched video.
   const ext = data.audio_url.includes(".wav") ? "wav" : "mp3";
   const audioPath = join(outDir, `narration.${ext}`);
-  await writeFile(audioPath, buf);
+  const claimedDuration = data.duration;
+  const DOWNLOAD_RETRIES = 4;
+  let actualDuration = 0;
+  for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
+    const audioRes = await fetch(data.audio_url, {
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!audioRes.ok) {
+      throw new Error(`Audio download failed: HTTP ${audioRes.status}`);
+    }
+    const buf = Buffer.from(await audioRes.arrayBuffer());
+    await writeFile(audioPath, buf);
+    // Measure actual duration via ffprobe
+    try {
+      const { execSync } = await import("node:child_process");
+      const out = execSync(
+        `ffprobe -v error -show_entries format=duration -of csv=p=0 "${audioPath}"`,
+        { encoding: "utf8" }
+      ).trim();
+      actualDuration = parseFloat(out);
+    } catch {
+      actualDuration = 0;
+    }
+    const shortBy = claimedDuration - actualDuration;
+    if (actualDuration >= claimedDuration - 0.5) {
+      if (attempt > 1) {
+        console.log(
+          `  [narrate] ✓ download OK on attempt ${attempt} (actual ${actualDuration.toFixed(2)}s / claimed ${claimedDuration.toFixed(2)}s)`
+        );
+      }
+      break;
+    }
+    if (attempt === DOWNLOAD_RETRIES) {
+      throw new Error(
+        `Audio truncated after ${DOWNLOAD_RETRIES} attempts: got ${actualDuration.toFixed(2)}s, expected ${claimedDuration.toFixed(2)}s`
+      );
+    }
+    console.warn(
+      `  [narrate] ⚠️  truncated download (actual ${actualDuration.toFixed(2)}s / claimed ${claimedDuration.toFixed(2)}s — short by ${shortBy.toFixed(2)}s). Retrying ${attempt + 1}/${DOWNLOAD_RETRIES}...`
+    );
+    await new Promise((r) => setTimeout(r, 1500 * attempt));
+  }
 
   const rawWords = data.word_timestamps ?? [];
   const words = rawWords.filter((w) => !w.word.startsWith("<") && !w.word.endsWith(">"));
 
   return {
     audioPath,
-    duration: data.duration,
+    // Use the ACTUAL measured duration, not HeyGen's claim. Even if both
+    // were equal at download time, future pipeline math should reference
+    // what's in the file.
+    duration: actualDuration > 0 ? actualDuration : claimedDuration,
     words,
     voice: { voice_id: v.voice_id, name: v.name },
   };
