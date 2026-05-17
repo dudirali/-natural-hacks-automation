@@ -231,24 +231,13 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
   }
 
   // Build SFX track from event list: silent base + multiple SFX placed at
-  // their exact timestamps. Defaults: whoosh on each segment cut. Caller can
-  // pass additional events (animation pops, emphasis hits, etc).
-  const ROOT = process.cwd();
-  const SFX_DIR = join(ROOT, "assets", "sfx");
+  // their exact timestamps. All events come from the caller (which uses
+  // pipeline/sound-design.ts as the single source of truth — including
+  // segment-cut whooshes). stitch-broll itself adds no events.
   let sfxTrackPath: string | null = null;
   try {
     const { existsSync } = await import("node:fs");
-
-    // Compose events: default whoosh on every cut + caller-supplied extras.
-    const defaultWhoosh = join(SFX_DIR, "sfx-whoosh.mp3");
     const events: SfxEvent[] = [];
-    if (existsSync(defaultWhoosh) && opts.segments.length > 1) {
-      let acc = 0;
-      for (let i = 0; i < opts.segments.length - 1; i++) {
-        acc += segDurations[i];
-        events.push({ time: Math.max(0, acc - 0.3), sfxPath: defaultWhoosh, volume: 0.5 });
-      }
-    }
     if (opts.sfxEvents) {
       for (const e of opts.sfxEvents) {
         if (existsSync(e.sfxPath)) events.push(e);
