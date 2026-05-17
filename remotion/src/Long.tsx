@@ -2,6 +2,8 @@ import React from "react";
 import { AbsoluteFill } from "remotion";
 import { z } from "zod";
 import { CaptionsOverlay } from "./components/CaptionsOverlay";
+import { SubscribePopup } from "./components/SubscribePopup";
+import { EndScreen } from "./components/EndScreen";
 
 export const wordSchema = z.object({
   word: z.string(),
@@ -45,7 +47,9 @@ export const DEFAULT_PROPS: LongProps = {
  */
 const CHROMA = "#FF00FF";
 
-export const Long: React.FC<LongProps> = ({ words }) => {
+export const Long: React.FC<LongProps> = ({ words, totalSeconds }) => {
+  // Default to 300s if not provided (e.g. studio preview).
+  const total = totalSeconds ?? 300;
   return (
     <AbsoluteFill style={{ backgroundColor: CHROMA }}>
       {/* Vignette at bottom for caption legibility */}
@@ -58,6 +62,13 @@ export const Long: React.FC<LongProps> = ({ words }) => {
       />
 
       <CaptionsOverlay words={words} />
+
+      {/* Subscribe popup at 28s — early enough to catch new viewers
+          before the YouTube average-view-duration cliff. */}
+      <SubscribePopup appearAt={28} duration={5} />
+
+      {/* End screen — last 8s. Dark scrim + big SUBSCRIBE CTA + handle. */}
+      <EndScreen totalSeconds={total} windowSeconds={8} />
     </AbsoluteFill>
   );
 };

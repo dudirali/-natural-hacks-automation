@@ -34,6 +34,43 @@ const PAUSE_SPLIT_SECONDS = 0.25;
 // Shorter = tighter sync with audio; longer = less flicker.
 const MAX_HOLD_PAUSE_SECONDS = 0.2;
 
+// Visual emphasis: words matching this regex render in yellow (#FFD60A) even
+// when not the "active" word. Highlights numbers, percentages, and a curated
+// set of urgent/medical keywords that should draw the eye.
+const EMPHASIS_RE = /^(\d+%?|\d+(?:st|nd|rd|th)|warning|never|always|secret|hidden|study|research|proven|shocking|dangerous|crucial|critical|deadly|stop|avoid|doctors?|scientists?)[.,!?:;]?$/i;
+
+// Keyword → emoji. If any word in a chunk matches, the emoji renders next to
+// the chunk for a moment of personality. First match wins.
+const EMOJI_MAP: Array<[RegExp, string]> = [
+  [/morning|sunrise|wake/i, "☀️"],
+  [/sleep|bed|night|tired/i, "😴"],
+  [/heart|cardio|pulse/i, "❤️"],
+  [/brain|memory|mind/i, "🧠"],
+  [/water|hydrat/i, "💧"],
+  [/eye|vision|sight/i, "👁️"],
+  [/back|spine|posture/i, "🦴"],
+  [/stomach|gut|digest|belly/i, "🫁"],
+  [/tea|coffee|drink/i, "☕"],
+  [/oil|olive|coconut/i, "🫒"],
+  [/lemon|citrus/i, "🍋"],
+  [/honey|sweet/i, "🍯"],
+  [/garlic|onion/i, "🧄"],
+  [/ginger|spice|cinnamon/i, "🌿"],
+  [/herb|plant|leaf/i, "🌱"],
+  [/walk|exercise|move/i, "🚶"],
+  [/sun|sunshine|vitamin d/i, "🌞"],
+  [/doctor|medical|health/i, "👨‍⚕️"],
+  [/warning|danger|stop/i, "⚠️"],
+  [/secret|hidden|reveal/i, "🤫"],
+];
+
+function emojiFor(text: string): string | null {
+  for (const [re, em] of EMOJI_MAP) {
+    if (re.test(text)) return em;
+  }
+  return null;
+}
+
 function groupIntoChunks(words: Word[]): Chunk[] {
   const chunks: Chunk[] = [];
   let current: Word[] = [];
@@ -122,21 +159,45 @@ export const CaptionsOverlay: React.FC<Props> = ({ words }) => {
             WebkitTextStroke: "1px rgba(0,0,0,0.4)",
           }}
         >
-          {active.words.map((w, i) => {
-            const isActive = t >= w.start && t < w.end;
+          {(() => {
+            const emoji = emojiFor(active.text);
             return (
-              <span
-                key={i}
-                style={{
-                  display: "inline-block",
-                  margin: "0 0.18em",
-                  color: isActive ? "#FFD60A" : "#FFFFFF",
-                }}
-              >
-                {w.word}
-              </span>
+              <>
+                {emoji && (
+                  <span
+                    style={{
+                      display: "inline-block",
+                      marginRight: "0.35em",
+                      fontSize: "1.05em",
+                    }}
+                  >
+                    {emoji}
+                  </span>
+                )}
+                {active.words.map((w, i) => {
+                  const isActive = t >= w.start && t < w.end;
+                  const isEmphasis = EMPHASIS_RE.test(w.word);
+                  // Active = yellow (current word). Emphasis = also yellow but with a slight
+                  // weight bump. Otherwise white.
+                  const color = isActive || isEmphasis ? "#FFD60A" : "#FFFFFF";
+                  return (
+                    <span
+                      key={i}
+                      style={{
+                        display: "inline-block",
+                        margin: "0 0.18em",
+                        color,
+                        // Slightly bolder for emphasis words even when not active.
+                        fontWeight: isEmphasis ? 900 : 800,
+                      }}
+                    >
+                      {w.word}
+                    </span>
+                  );
+                })}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
     </div>
