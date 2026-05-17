@@ -52,8 +52,8 @@ export const SOUND_LANG = {
   I_COMPARE_RIGHT: { path: p("sfx-sparkle.mp3"), volume: 0.30 }, // right-side items
 
   // ─── Category E: Narration emphasis ───
-  E_NUMBER: { path: p("sfx-click.mp3"), volume: 0.26 },       // spoken numbers / %
-  E_STRONG: { path: p("sfx-impact.mp3"), volume: 0.38 },      // WARNING / NEVER / STUDY / SECRET
+  E_NUMBER: { path: p("sfx-click.mp3"), volume: 0.32 },       // spoken numbers / %
+  E_STRONG: { path: p("sfx-impact.mp3"), volume: 0.55 },      // WARNING / NEVER / STUDY / SECRET — louder for true peaks
 
   // ─── Category U: UI overlays ───
   U_SUBSCRIBE: { path: p("sfx-twinkle.mp3"), volume: 0.45 },  // subscribe popup at 28s

@@ -68,10 +68,13 @@ async function main() {
 
   // 2) Generate script (Claude)
   logHeader("Step 2/7 — Generate long-form script (Claude)");
-  const segments = await generateScript(topic);
+  const scriptResult = await generateScript(topic);
+  const segments = scriptResult.segments;
   const segmentsPath = join(TOPIC_OUT_DIR, "segments.json");
-  await writeFile(segmentsPath, JSON.stringify(segments, null, 2));
-  console.log(`Saved ${segments.length} segments → ${segmentsPath}`);
+  // Save the full script result (segments + sections + rehook). build-from-segments
+  // will read this back and route the section data into render-props for Remotion.
+  await writeFile(segmentsPath, JSON.stringify(scriptResult, null, 2));
+  console.log(`Saved ${segments.length} segments / ${scriptResult.sections.length} sections → ${segmentsPath}`);
   for (const s of segments.slice(0, 5)) {
     console.log(`  ${s.id} (${s.role}): "${s.text.slice(0, 70)}..."`);
   }

@@ -7,9 +7,20 @@ import { BottomBanner, BOTTOM_BANNER_HEIGHT } from "./components/template/Bottom
 import { CanvasBackground } from "./components/template/CanvasBackground";
 import { CircleMask } from "./components/template/CircleMask";
 import { CanvasDecorations } from "./components/template/CanvasDecorations";
+import { ProgressBar } from "./components/template/ProgressBar";
+import { SectionBadge } from "./components/template/SectionBadge";
+import { ComingUpCard } from "./components/template/ComingUpCard";
 import { SubscribePopup } from "./components/SubscribePopup";
 import { EndScreen } from "./components/EndScreen";
 import { AnimationDispatcher, animationSchema } from "./components/animations";
+
+export const sectionSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+  subtitle: z.string(),
+  start: z.number(),
+  end: z.number(),
+});
 
 export const wordSchema = z.object({
   word: z.string(),
@@ -28,6 +39,8 @@ export const longSchema = z.object({
   animations: z.array(animationSchema).optional(),
   /** Title shown in the permanent top banner (typically `thumbnail_hook`). */
   videoTitle: z.string().optional(),
+  /** Sections drive ProgressBar + SectionBadge + ComingUpCard for retention. */
+  sections: z.array(sectionSchema).optional(),
 });
 
 export type LongProps = z.infer<typeof longSchema>;
@@ -85,37 +98,47 @@ const CANVAS_BOX = {
  *   7. SubscribePopup at 28s (hidden when an animation is on screen).
  *   8. EndScreen in the last 8s.
  */
-export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations, videoTitle }) => {
+export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations, videoTitle, sections }) => {
   const total = totalSeconds ?? 300;
   const title = videoTitle ?? "@naturalhacks";
+  const secs = sections ?? [];
 
   return (
     <AbsoluteFill style={{ backgroundColor: CHROMA }}>
-      {/* 2: Opaque canvas covers the middle region only */}
+      {/* Opaque canvas covers the middle region only */}
       <CanvasBackground top={CANVAS_TOP} bottom={BOTTOM_BANNER_HEIGHT} />
 
-      {/* 3: Circular chroma porthole on the left for B-roll */}
+      {/* Circular chroma porthole on the left for B-roll */}
       <CircleMask cx={CIRCLE_CX} cy={CIRCLE_CY} r={CIRCLE_R} />
 
-      {/* 3b: Always-present canvas decorations + per-chunk big icon card */}
+      {/* Always-present canvas decorations + per-chunk big icon card */}
       <CanvasDecorations words={words} captionBox={CAPTIONS_BOX} canvasBox={CANVAS_BOX} />
 
-      {/* 4: Captions on the right side of canvas (black text) */}
+      {/* Captions on the right side of canvas (black text) */}
       <CanvasCaptions words={words} box={CAPTIONS_BOX} />
 
-      {/* 5: Animations cover the canvas area when active.
-              Constrained between the banners so the branding stays visible. */}
+      {/* RETENTION OVERLAYS — hidden while a full-screen animation is active */}
+      <ConditionalOverlay animations={animations ?? []}>
+        <SectionBadge sections={secs} />
+        <ComingUpCard sections={secs} canvasBox={CANVAS_BOX} />
+      </ConditionalOverlay>
+
+      {/* Animations cover the canvas band when active */}
       <CanvasAnimations
         animations={animations ?? []}
         top={CANVAS_TOP}
         bottom={BOTTOM_BANNER_HEIGHT}
       />
 
-      {/* 6: Permanent banners */}
+      {/* Permanent banners */}
       <TopBanner title={title} />
       <BottomBanner />
 
-      {/* 7+8: Popups — hidden during animations */}
+      {/* Persistent progress bar — survives even during animations.
+          Sits just above the bottom banner so it's always visible. */}
+      <ProgressBar totalSeconds={total} bottom={BOTTOM_BANNER_HEIGHT + 2} />
+
+      {/* Popups — hidden during animations */}
       <ConditionalOverlay animations={animations ?? []}>
         <SubscribePopup appearAt={28} duration={5} />
       </ConditionalOverlay>

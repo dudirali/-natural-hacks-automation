@@ -107,15 +107,29 @@ export const EndScreen: React.FC<Props> = ({ totalSeconds, windowSeconds = 8 }) 
       <div
         style={{
           fontFamily,
-          fontWeight: 500,
-          fontSize: 22,
-          color: "rgba(255,255,255,0.8)",
-          letterSpacing: "0.05em",
+          fontWeight: 700,
+          fontSize: 24,
+          color: "#FCD34D",
+          letterSpacing: "0.04em",
           marginTop: 6,
+          transform: `scale(${scale})`,
+          textShadow: "0 3px 10px rgba(0,0,0,0.7)",
+        }}
+      >
+        ⏭ Watch the next one — new tip drops daily
+      </div>
+      <div
+        style={{
+          fontFamily,
+          fontWeight: 500,
+          fontSize: 18,
+          color: "rgba(255,255,255,0.75)",
+          letterSpacing: "0.04em",
+          marginTop: -8,
           transform: `scale(${scale})`,
         }}
       >
-        New natural-health videos every day
+        Tap SUBSCRIBE so you don't miss tomorrow's
       </div>
     </div>
   );

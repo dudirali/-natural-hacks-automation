@@ -85,8 +85,10 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
     // 4) Subtle vignette to keep eye on center subject.
     // 5) Quick fade in/out at segment edges → smooth dip-to-black between cuts.
     const isHook = i === 0;
-    const zoomIncr = isHook ? 0.0011 : 0.00045;
-    const zoomCap = isHook ? 1.20 : 1.10;
+    // First segment: VERY aggressive zoom for retention — "something is moving,
+    // I have to keep watching". 1.0 → 1.35 over the segment duration.
+    const zoomIncr = isHook ? 0.0022 : 0.00045;
+    const zoomCap = isHook ? 1.35 : 1.10;
     const variant = i % 3;
     // x/y expressions in zoompan: 'iw/2-(iw/zoom/2)' centers the crop.
     // For pan variants we add a slow drift on x.

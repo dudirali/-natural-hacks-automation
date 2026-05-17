@@ -36,8 +36,15 @@ await mkdir(SEGMENTS_DIR, { recursive: true });
 await mkdir(PUBLIC_DIR, { recursive: true });
 
 console.log(`=== Build Pipeline (long-form, FFmpeg-stitched, ${NARRATION_SPEED}x narration) ===\n`);
-const segments: Segment[] = JSON.parse(await readFile(SEGMENTS_CONFIG, "utf8"));
-console.log(`Loaded ${segments.length} segments from ${SEGMENTS_CONFIG}`);
+// segments.json may be either the new ScriptResult shape or a legacy bare array.
+const rawScript = JSON.parse(await readFile(SEGMENTS_CONFIG, "utf8"));
+const segments: Segment[] = Array.isArray(rawScript) ? rawScript : rawScript.segments;
+const sections: Array<{ id: number; title: string; subtitle: string; first_seg_id: number; last_seg_id: number }> =
+  Array.isArray(rawScript) ? [] : (rawScript.sections ?? []);
+const rehookSegId: number | undefined = Array.isArray(rawScript) ? undefined : rawScript.rehook_seg_id;
+console.log(
+  `Loaded ${segments.length} segments / ${sections.length} sections from ${SEGMENTS_CONFIG}`
+);
 
 // PHASE 1 — TTS for all segments in parallel (concurrency 4)
 console.log(`\n[1/5] TTS for ${segments.length} segments (concurrency=4)...`);
@@ -245,6 +252,26 @@ const totalSeconds = stitch.totalSeconds;
 const durationFrames = Math.ceil(totalSeconds * TARGET_FPS);
 
 // Animations were already generated before stitch (so SFX could be timed to them).
+
+// Compute SECTION time ranges from the per-segment cumulative timings.
+// Each section spans (first_seg.start → last_seg.end) in seconds.
+const segmentTimeById = new Map<number, { start: number; end: number }>();
+for (const t of segmentTimingsForAnim) segmentTimeById.set(t.id, { start: t.start, end: t.end });
+const sectionTimings = sections
+  .map((s) => {
+    const first = segmentTimeById.get(s.first_seg_id);
+    const last = segmentTimeById.get(s.last_seg_id);
+    if (!first || !last) return null;
+    return {
+      id: s.id,
+      title: s.title,
+      subtitle: s.subtitle,
+      start: first.start,
+      end: last.end,
+    };
+  })
+  .filter((s): s is { id: number; title: string; subtitle: string; start: number; end: number } => s !== null);
+
 const renderProps = {
   /** Single stitched video file (B-roll + audio + music baked in) */
   videoFile: stitchedPublicName,
@@ -259,6 +286,8 @@ const renderProps = {
   animations,
   /** Title shown permanently in the top banner. */
   videoTitle: process.env.BUILD_TOPIC_TITLE ?? "",
+  /** Section time ranges (for ProgressBar + SectionBadge + ComingUpCard). */
+  sections: sectionTimings,
 };
 await writeFile(join(OUT_DIR, "render-props.json"), JSON.stringify(renderProps, null, 2));
 
