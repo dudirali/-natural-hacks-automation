@@ -62,7 +62,47 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
   for (let i = 0; i < opts.segments.length; i++) {
     const seg = opts.segments[i];
     const dur = segDurations[i].toFixed(3);
+    const durNum = parseFloat(dur);
     const outFile = join(tmpDir, `seg-${seg.id}.mp4`);
+
+    // === Cinematic treatment ===
+    // 1) Ken Burns slow zoom (zoompan filter). First segment gets a stronger
+    //    "hook" zoom for a punchier opener.
+    // 2) Direction varies per segment (zoom-center / zoom-pan-right / zoom-pan-left)
+    //    so the video doesn't feel monotone.
+    // 3) Warm wellness color grade (eq filter).
+    // 4) Subtle vignette to keep eye on center subject.
+    // 5) Quick fade in/out at segment edges → smooth dip-to-black between cuts.
+    const isHook = i === 0;
+    const zoomIncr = isHook ? 0.0011 : 0.00045;
+    const zoomCap = isHook ? 1.20 : 1.10;
+    const variant = i % 3;
+    // x/y expressions in zoompan: 'iw/2-(iw/zoom/2)' centers the crop.
+    // For pan variants we add a slow drift on x.
+    let zoomX: string;
+    let zoomY: string;
+    if (variant === 0 || isHook) {
+      zoomX = "iw/2-(iw/zoom/2)"; // centered
+      zoomY = "ih/2-(ih/zoom/2)";
+    } else if (variant === 1) {
+      // pan right: x slides from 0 toward iw-iw/zoom
+      zoomX = `min((iw-iw/zoom),on*${(2.5).toFixed(2)})`;
+      zoomY = "ih/2-(ih/zoom/2)";
+    } else {
+      // pan left: x slides the opposite way
+      zoomX = `max(0,(iw-iw/zoom)-on*${(2.5).toFixed(2)})`;
+      zoomY = "ih/2-(ih/zoom/2)";
+    }
+    const kenBurns = `zoompan=z='min(zoom+${zoomIncr},${zoomCap})':d=1:x='${zoomX}':y='${zoomY}':s=${width}x${height}:fps=${fps}`;
+    // Warm grade: slight saturation lift + tilt toward red (gamma_r > 1, gamma_b < 1).
+    const grade = `eq=saturation=1.10:gamma=0.97:gamma_r=1.03:gamma_g=0.99:gamma_b=0.96`;
+    // Subtle vignette (radial darkening) — angle controls strength.
+    const vig = `vignette=PI/5.5`;
+    // Fade in/out (0.15s) — smooth dip-to-black at segment boundaries.
+    const fadeOutStart = Math.max(0, durNum - 0.15).toFixed(3);
+    const fade = `fade=t=in:st=0:d=0.15,fade=t=out:st=${fadeOutStart}:d=0.15`;
+    const vfChain = [kenBurns, grade, vig, fade, "setsar=1"].join(",");
+
     const cmd = [
       "ffmpeg",
       "-y",
@@ -71,16 +111,12 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
       "-i", shellQuote(seg.videoPath),
       "-i", shellQuote(seg.audioPath),
       "-t", dur,
-      // Map explicitly: video from input 0 (Pexels), audio from input 1
-      // (HeyGen narration). Without -map, ffmpeg's stream-picker sometimes
-      // chose the Pexels clip's silent/ambient audio track, leaving the
-      // narration entirely out of the segment — that was the source of
-      // the "narrator missing" silent windows in stitched concat.
+      // Map explicitly: video from input 0 (Pexels), audio from input 1 (HeyGen).
+      // Without -map, ffmpeg's stream-picker sometimes chose the Pexels clip's
+      // ambient audio track, leaving the narration entirely out of the segment.
       "-map", "0:v:0",
       "-map", "1:a:0",
-      "-vf", shellQuote(
-        `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},setsar=1`
-      ),
+      "-vf", shellQuote(vfChain),
       // Pad audio with silence to match the full segment duration (dur).
       "-af", shellQuote(`apad=whole_dur=${dur}`),
       "-c:v", "libx264",
