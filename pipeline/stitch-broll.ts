@@ -210,32 +210,91 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
     console.warn(`[stitch] narrator silence scan failed: ${(e as Error).message.slice(0, 100)}`);
   }
 
+  // Build optional SFX track: a silent base + whoosh sounds placed at each
+  // segment boundary. Tier-3 audio polish — adds tempo / "produced" feel.
+  const ROOT = process.cwd();
+  const whooshPath = join(ROOT, "assets", "sfx", "whoosh.mp3");
+  let sfxTrackPath: string | null = null;
+  try {
+    const { existsSync } = await import("node:fs");
+    if (existsSync(whooshPath) && opts.segments.length > 1) {
+      sfxTrackPath = join(tmpDir, "sfx-track.wav");
+      // Whoosh start times: 0.3s BEFORE each cut so the peak hits at the cut.
+      const cuts: number[] = [];
+      let acc = 0;
+      for (let i = 0; i < opts.segments.length - 1; i++) {
+        acc += segDurations[i];
+        cuts.push(Math.max(0, acc - 0.3));
+      }
+      // Build filter: split the whoosh into N copies, delay each, mix with silence base.
+      const N = cuts.length;
+      const splitLabels = cuts.map((_, i) => `[w${i}]`).join("");
+      const delays = cuts
+        .map(
+          (t, i) =>
+            `[w${i}]adelay=${(t * 1000).toFixed(0)}|${(t * 1000).toFixed(0)}[d${i}]`
+        )
+        .join(";");
+      const mixIns = ["[0:a]", ...cuts.map((_, i) => `[d${i}]`)].join("");
+      const sfxFilter = `[1:a]asplit=${N}${splitLabels};${delays};${mixIns}amix=inputs=${N + 1}:duration=longest:normalize=0`;
+      run(
+        [
+          "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+          "-f", "lavfi", "-t", totalSeconds.toFixed(3),
+          "-i", "anullsrc=r=44100:cl=stereo",
+          "-i", shellQuote(whooshPath),
+          "-filter_complex", shellQuote(sfxFilter),
+          "-ar", "44100", "-ac", "2",
+          shellQuote(sfxTrackPath),
+        ].join(" ")
+      );
+      console.log(`[stitch] sfx track built (${N} whooshes)`);
+    }
+  } catch (e) {
+    console.warn(`[stitch] sfx build failed: ${(e as Error).message.slice(0, 120)}`);
+    sfxTrackPath = null;
+  }
+
   let finalPath = concatPath;
 
   if (opts.musicPath) {
-    // PASS 3: mix in background music (only 2 inputs → low memory)
-    console.log(`[stitch] PASS 3: mixing in background music at volume ${musicVolume}`);
+    // PASS 3: mix narrator + music (+ optional SFX track).
+    // Narrator gets podcast-style EQ + compression for a polished, even sound.
+    // Music: loudnorm to -26 LUFS, sidechain-ducked under narrator.
+    console.log(`[stitch] PASS 3: mixing narrator + music${sfxTrackPath ? " + sfx" : ""}`);
     const outWithMusic = join(opts.outDir, "stitched-broll.mp4");
     const t3 = Date.now();
+
+    // Narrator EQ chain: highpass removes low rumble (<80Hz), lowpass tames
+    // harsh top end (>12kHz), acompressor evens out dynamic range (radio sound).
+    const narrChain = `highpass=f=80,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=10:release=200:makeup=2`;
+
+    const inputArgs: string[] = [
+      "-i", shellQuote(concatPath),
+      "-stream_loop", "-1", "-i", shellQuote(opts.musicPath),
+    ];
+    let filter: string;
+    if (sfxTrackPath) {
+      inputArgs.push("-i", shellQuote(sfxTrackPath));
+      filter =
+        `[0:a]${narrChain},asplit=2[narr1][narr_sc];` +
+        `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},loudnorm=I=-26:LRA=11:TP=-3.0,volume=${musicVolume}[mus_raw];` +
+        `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=3:attack=15:release=700:makeup=1[mus_ducked];` +
+        `[2:a]volume=0.55,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[sfx];` +
+        `[narr1][mus_ducked][sfx]amix=inputs=3:duration=first:dropout_transition=0:normalize=0[a]`;
+    } else {
+      filter =
+        `[0:a]${narrChain},asplit=2[narr1][narr_sc];` +
+        `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},loudnorm=I=-26:LRA=11:TP=-3.0,volume=${musicVolume}[mus_raw];` +
+        `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=3:attack=15:release=700:makeup=1[mus_ducked];` +
+        `[narr1][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`;
+    }
+
     run(
       [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-i", shellQuote(concatPath),
-        "-stream_loop", "-1",
-        "-i", shellQuote(opts.musicPath),
-        // Narrator goes through unchanged (no loudnorm — single-pass loudnorm
-        // on a long stitched track can cause uneven gain reductions). HeyGen
-        // output is already consistent enough.
-        // Music: loudnorm to -26 LUFS, sidechain-ducked under narrator.
-        "-filter_complex", shellQuote(
-          `[0:a]asplit=2[narr1][narr_sc];` +
-          `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},loudnorm=I=-26:LRA=11:TP=-3.0,volume=${musicVolume}[mus_raw];` +
-          `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=3:attack=15:release=700:makeup=1[mus_ducked];` +
-          `[narr1][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
-        ),
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        ...inputArgs,
+        "-filter_complex", shellQuote(filter),
         "-map", "0:v",
         "-map", "[a]",
         "-c:v", "copy",
