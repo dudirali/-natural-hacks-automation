@@ -12,6 +12,7 @@ import { pickNextTopic, markTopicUsed } from "./pick-topic.ts";
 import { generateScript } from "./generate-script.ts";
 import { generateMetadata } from "./generate-metadata.ts";
 import { uploadToYouTube } from "./youtube-upload.ts";
+import { searchAndDownloadPhoto } from "./pexels.ts";
 
 console.log(`[BOOT] all imports loaded`);
 
@@ -134,27 +135,54 @@ async function main() {
   const metadata = await generateMetadata(topic, segments);
   console.log(`Title:    ${metadata.title}`);
   console.log(`Hook:     ${metadata.thumbnail_hook}  (accent: ${metadata.thumbnail_accent})`);
+  console.log(`Kicker:   ${metadata.thumbnail_kicker}`);
+  console.log(`Hero qry: ${metadata.thumbnail_image_query}`);
   console.log(`Tags:     ${metadata.tags.slice(0, 8).join(", ")}...`);
   await writeFile(join(TOPIC_OUT_DIR, "metadata.json"), JSON.stringify(metadata, null, 2));
 
   // 5b) Render custom thumbnail.
-  // Extract a single mid-frame from segment 1's Pexels clip as the hero image,
-  // then Remotion renders the Thumbnail composition (overlay text + accent).
+  // Hero image: dedicated Pexels PHOTO search (sharp posed still beats a
+  // random video frame for thumbnail composition). Falls back to seg 1's
+  // video frame if the photo search returns nothing.
   logHeader("Step 5b/7 — Render thumbnail");
   const PUBLIC_DIR_LOCAL = join(ROOT, "public");
   const heroBasename = `thumbnail-hero.jpg`;
   const heroPath = join(PUBLIC_DIR_LOCAL, heroBasename);
-  const seg1VideoPath = join(TOPIC_OUT_DIR, "segments", "1", "video.mp4");
-  execSync(
-    `ffmpeg -y -hide_banner -loglevel error -ss 2 -i "${seg1VideoPath}" ` +
-      `-vf "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720" ` +
-      `-frames:v 1 -q:v 2 "${heroPath}"`,
-    { cwd: ROOT, stdio: "inherit" }
-  );
+  let heroSource = "pexels-photo";
+  // Fallback keywords if the primary query returns nothing.
+  const titleWords = topic.title.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(/\s+/).slice(0, 4).join(" ");
+  const photoPick = await searchAndDownloadPhoto({
+    keywords: [metadata.thumbnail_image_query, titleWords, "concerned senior person"].filter(Boolean),
+    outDir: PUBLIC_DIR_LOCAL,
+    outFile: heroBasename,
+    orientation: "landscape",
+  });
+  if (photoPick) {
+    console.log(`[hero] Pexels photo id=${photoPick.sourceId} kw="${photoPick.usedKeyword}"`);
+    // Ensure 1280x720 — Pexels photos vary, so crop/scale.
+    execSync(
+      `ffmpeg -y -hide_banner -loglevel error -i "${heroPath}" ` +
+        `-vf "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720" ` +
+        `-q:v 2 "${heroPath}.tmp.jpg" && mv "${heroPath}.tmp.jpg" "${heroPath}"`,
+      { cwd: ROOT, stdio: "inherit", shell: "/bin/bash" } as unknown as { shell: string }
+    );
+  } else {
+    heroSource = "video-frame-fallback";
+    console.log(`[hero] Pexels photo search returned nothing — using seg 1 video frame as fallback`);
+    const seg1VideoPath = join(TOPIC_OUT_DIR, "segments", "1", "video.mp4");
+    execSync(
+      `ffmpeg -y -hide_banner -loglevel error -ss 2 -i "${seg1VideoPath}" ` +
+        `-vf "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720" ` +
+        `-frames:v 1 -q:v 2 "${heroPath}"`,
+      { cwd: ROOT, stdio: "inherit" }
+    );
+  }
+  console.log(`[hero] source=${heroSource}`);
   const thumbnailProps = {
     heroImage: heroBasename,
     hook: metadata.thumbnail_hook,
     accent: metadata.thumbnail_accent,
+    kicker: metadata.thumbnail_kicker,
   };
   const thumbnailPropsPath = join(TOPIC_OUT_DIR, "thumbnail-props.json");
   await writeFile(thumbnailPropsPath, JSON.stringify(thumbnailProps, null, 2));

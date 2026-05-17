@@ -4,6 +4,87 @@ import { join } from "node:path";
 
 const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const SEARCH_URL = "https://api.pexels.com/videos/search";
+const PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search";
+
+interface PexelsPhotoSrc {
+  original: string;
+  large2x: string;
+  large: string;
+  medium: string;
+  landscape: string;
+  portrait: string;
+}
+
+interface PexelsPhoto {
+  id: number;
+  width: number;
+  height: number;
+  url: string;
+  src: PexelsPhotoSrc;
+  photographer: string;
+}
+
+interface PexelsPhotoResponse {
+  photos: PexelsPhoto[];
+}
+
+/**
+ * Search Pexels PHOTOS (stills, not videos) and download the first match.
+ * Designed for thumbnail hero images where a sharp posed shot beats a
+ * random video frame. Returns the JPEG file path.
+ */
+export async function searchAndDownloadPhoto(opts: {
+  keywords: string[];
+  outDir: string;
+  outFile: string; // basename e.g. "thumbnail-hero.jpg"
+  orientation?: "landscape" | "portrait" | "square";
+}): Promise<{ path: string; sourceId: number; sourceUrl: string; usedKeyword: string } | null> {
+  if (!PEXELS_API_KEY) throw new Error("PEXELS_API_KEY missing in .env");
+  if (!opts.keywords.length) return null;
+
+  await mkdir(opts.outDir, { recursive: true });
+
+  for (const keyword of opts.keywords) {
+    const url = new URL(PHOTO_SEARCH_URL);
+    url.searchParams.set("query", keyword);
+    url.searchParams.set("orientation", opts.orientation ?? "landscape");
+    url.searchParams.set("size", "large");
+    url.searchParams.set("per_page", "10");
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: PEXELS_API_KEY },
+    });
+    if (!res.ok) {
+      console.warn(`  [pexels:photo] "${keyword}" HTTP ${res.status}`);
+      continue;
+    }
+    const data = (await res.json()) as PexelsPhotoResponse;
+    const photos = data.photos ?? [];
+    if (photos.length === 0) continue;
+
+    const pick = photos[0];
+    // Prefer the "large2x" or "landscape" variant — they're sized to 1500×1000 or
+    // 1200×627 respectively, both bigger than our 1280×720 target.
+    const srcUrl = pick.src.large2x ?? pick.src.landscape ?? pick.src.original;
+
+    const imgRes = await fetch(srcUrl);
+    if (!imgRes.ok) {
+      console.warn(`  [pexels:photo] download failed (HTTP ${imgRes.status})`);
+      continue;
+    }
+    const buf = Buffer.from(await imgRes.arrayBuffer());
+    const outPath = join(opts.outDir, opts.outFile);
+    await writeFile(outPath, buf);
+
+    return {
+      path: outPath,
+      sourceId: pick.id,
+      sourceUrl: pick.url,
+      usedKeyword: keyword,
+    };
+  }
+  return null;
+}
 
 interface PexelsVideoFile {
   id: number;

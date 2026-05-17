@@ -11,6 +11,11 @@ export interface YouTubeMetadata {
   thumbnail_hook: string;
   /** One bold accent word/number from the hook that should stand out. */
   thumbnail_accent: string;
+  /** Small uppercase kicker shown above the hook. e.g. "WARNING", "DOCTORS HIDE", "STUDY:". 1-2 words. */
+  thumbnail_kicker: string;
+  /** Pexels PHOTO search query for a hero image emphasising emotion/relevance.
+   *  e.g. "concerned senior woman looking", "doctor pointing diagram", "close up tired eyes". */
+  thumbnail_image_query: string;
 }
 
 const DISCLAIMER = `
@@ -42,8 +47,19 @@ STYLE (match the channel exactly):
   • thumbnail_accent: one word OR number from thumbnail_hook that should pop in a different color.
     Pick what's most visually arresting — usually the number, the body part, or the surprising noun.
     Examples: "7", "BANANA", "MAGNESIUM"
+  • thumbnail_kicker: 1-2 ALL-CAPS words shown above the hook as a small "label". Creates urgency/curiosity.
+    Examples: "WARNING", "DOCTORS HIDE", "STUDY:", "ALERT", "EXPOSED", "AGE 50+", "NEW RESEARCH"
+  • thumbnail_image_query: a Pexels PHOTO search query (3-6 words) that will return a CLOSE-UP shot
+    with strong human emotion or a clear body part / hero object.
+    Prefer: faces of senior adults (concerned/surprised/touching their body), close-up body parts,
+    hero foods/herbs. AVOID: wide landscapes, abstract textures, doctors in offices.
+    Examples:
+    - "concerned senior woman touching back close up"
+    - "elderly man holding stomach worried close up"
+    - "close up hand holding lemon and water glass"
+    - "senior woman shocked face looking close up"
 
-Return ONLY valid JSON: { "title": "...", "description": "...", "tags": [...], "thumbnail_hook": "...", "thumbnail_accent": "..." }`;
+Return ONLY valid JSON with ALL these fields populated.`;
 
   const userPrompt = `Topic: ${topic.title}
 Premise: ${topic.premise}
@@ -80,6 +96,9 @@ Generate the metadata now. The description MUST include timestamps and a 5x5 has
     meta.thumbnail_accent = words.find((w) => /^\d+$/.test(w)) ?? words[0];
   }
   meta.thumbnail_accent = meta.thumbnail_accent.toUpperCase().trim();
+  if (!meta.thumbnail_kicker) meta.thumbnail_kicker = "WARNING";
+  meta.thumbnail_kicker = meta.thumbnail_kicker.toUpperCase().trim();
+  if (!meta.thumbnail_image_query) meta.thumbnail_image_query = "concerned senior person close up";
 
   // Append boilerplate disclaimer
   meta.description = meta.description.trim() + "\n\n" + DISCLAIMER;
