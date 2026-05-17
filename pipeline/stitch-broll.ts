@@ -154,13 +154,15 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
         "-i", shellQuote(concatPath),
         "-stream_loop", "-1",
         "-i", shellQuote(opts.musicPath),
-        // Music source is now at -16 LUFS (broadcast level), so no loudnorm
-        // needed. Sidechain ducking under narrator + dropout_transition=0 +
-        // normalize=0. musicVolume sets the static reduction below narrator.
+        // Normalize narrator to -16 LUFS for consistent foreground level
+        // regardless of HeyGen output variance. Music ducks under narrator
+        // (gentler 3:1 ratio = less obvious "popping" when narrator pauses).
+        // amix: normalize=0 + dropout_transition=0 so no automatic attenuation
+        // or breath-triggered fades.
         "-filter_complex", shellQuote(
-          `[0:a]volume=1.0,asplit=2[narr1][narr_sc];` +
-          `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},volume=${musicVolume}[mus_raw];` +
-          `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=400:makeup=1[mus_ducked];` +
+          `[0:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[narr1][narr_sc];` +
+          `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},loudnorm=I=-26:LRA=11:TP=-3.0,volume=${musicVolume}[mus_raw];` +
+          `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=3:attack=15:release=700:makeup=1[mus_ducked];` +
           `[narr1][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
         ),
         "-map", "0:v",
