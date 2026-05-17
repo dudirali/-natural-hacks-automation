@@ -123,6 +123,39 @@ const stitch = await stitchBroll({
 });
 console.log(`      ✅ Stitched in ${((Date.now() - st0) / 1000).toFixed(0)}s → ${stitch.outPath}`);
 
+// PHASE 4b — verify the stitched audio has no large silent windows.
+// If silence > 2.5s exists, the pipeline introduced it after TTS — bug to
+// surface in logs (not yet failing the run, just diagnostic).
+console.log(`\n[4b/5] Scanning stitched audio for silent windows >= 2.5s...`);
+try {
+  const silOut = execSync(
+    `ffmpeg -hide_banner -nostats -i "${stitch.outPath}" -af "silencedetect=noise=-40dB:duration=2.5" -f null - 2>&1 | grep -E "silence_(start|end)" || true`,
+    { encoding: "utf8", shell: "/bin/bash" } as any
+  );
+  const windows: Array<{ start: number; end: number; dur: number }> = [];
+  let lastStart: number | null = null;
+  for (const line of silOut.split("\n")) {
+    const sm = line.match(/silence_start:\s*([\d.]+)/);
+    const em = line.match(/silence_end:\s*([\d.]+)/);
+    if (sm) lastStart = parseFloat(sm[1]);
+    else if (em && lastStart != null) {
+      const end = parseFloat(em[1]);
+      windows.push({ start: lastStart, end, dur: end - lastStart });
+      lastStart = null;
+    }
+  }
+  if (windows.length === 0) {
+    console.log(`      ✅ no silent windows >= 2.5s in stitched audio`);
+  } else {
+    console.log(`      ⚠️  FOUND ${windows.length} silent window(s) >= 2.5s:`);
+    for (const w of windows) {
+      console.log(`         silence: ${w.start.toFixed(2)}s → ${w.end.toFixed(2)}s  (${w.dur.toFixed(2)}s long)`);
+    }
+  }
+} catch (e) {
+  console.warn(`      stitched silence scan failed: ${(e as Error).message.slice(0, 100)}`);
+}
+
 // PHASE 5 — copy stitched video to public/ + compute GLOBAL caption timings
 console.log(`\n[5/5] Staging stitched video + computing global caption timings...`);
 const stitchedPublicName = "stitched-broll.mp4";

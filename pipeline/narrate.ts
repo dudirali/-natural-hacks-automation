@@ -164,14 +164,20 @@ async function narrateOnce(
     }
     const buf = Buffer.from(await audioRes.arrayBuffer());
     await writeFile(audioPath, buf);
-    // Measure actual duration via ffprobe
+    // Measure ACTUAL playable duration by full-decode (not just header).
+    // ffprobe -show_entries format=duration reads header info which can be
+    // wrong for VBR MP3 / WAV; ffmpeg decode gives the real wall-clock length.
     try {
       const { execSync } = await import("node:child_process");
       const out = execSync(
-        `ffprobe -v error -show_entries format=duration -of csv=p=0 "${audioPath}"`,
-        { encoding: "utf8" }
+        `ffmpeg -hide_banner -nostats -i "${audioPath}" -f null - 2>&1 | grep -oE 'time=[0-9:.]+' | tail -1 | cut -d= -f2`,
+        { encoding: "utf8", shell: "/bin/bash" } as any
       ).trim();
-      actualDuration = parseFloat(out);
+      // parse "HH:MM:SS.ss"
+      const parts = out.split(":").map(parseFloat);
+      actualDuration = parts.length === 3
+        ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+        : 0;
     } catch {
       actualDuration = 0;
     }
