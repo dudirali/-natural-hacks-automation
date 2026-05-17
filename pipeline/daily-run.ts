@@ -159,9 +159,11 @@ async function main() {
   const thumbnailPropsPath = join(TOPIC_OUT_DIR, "thumbnail-props.json");
   await writeFile(thumbnailPropsPath, JSON.stringify(thumbnailProps, null, 2));
   const thumbnailPng = join(TOPIC_OUT_DIR, "thumbnail.png");
+  // `remotion still` is the single-frame variant — outputs a PNG file
+  // (the `render` command with --frames=0 expects a directory name).
   execSync(
-    `npx remotion render remotion/src/index.ts Thumbnail ${thumbnailPng} ` +
-      `--props=${thumbnailPropsPath} --image-format=png --frames=0`,
+    `npx remotion still remotion/src/index.ts Thumbnail ${thumbnailPng} ` +
+      `--props=${thumbnailPropsPath}`,
     { cwd: ROOT, stdio: "inherit" }
   );
   console.log(`✅ Thumbnail → ${thumbnailPng}`);
