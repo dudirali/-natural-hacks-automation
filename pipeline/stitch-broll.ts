@@ -138,6 +138,38 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
   );
   console.log(`[stitch] PASS 2 done in ${((Date.now() - t2) / 1000).toFixed(0)}s`);
 
+  // Diagnostic: silence scan on the NARRATOR-ONLY track (before music mix).
+  // This catches "narrator-silent" regions that get masked by music in the
+  // final output — the user's actual complaint.
+  try {
+    const silOut = execSync(
+      `ffmpeg -hide_banner -nostats -i ${shellQuote(concatPath)} -af "silencedetect=noise=-30dB:duration=1.5" -f null - 2>&1 | grep -E "silence_(start|end)" || true`,
+      { encoding: "utf8", shell: "/bin/bash" } as unknown as { shell: string }
+    );
+    const windows: Array<{ start: number; end: number; dur: number }> = [];
+    let lastStart: number | null = null;
+    for (const line of silOut.split("\n")) {
+      const sm = line.match(/silence_start:\s*([\d.]+)/);
+      const em = line.match(/silence_end:\s*([\d.]+)/);
+      if (sm) lastStart = parseFloat(sm[1]);
+      else if (em && lastStart != null) {
+        const end = parseFloat(em[1]);
+        windows.push({ start: lastStart, end, dur: end - lastStart });
+        lastStart = null;
+      }
+    }
+    if (windows.length === 0) {
+      console.log(`[stitch] ✅ narrator-only audio has no silent windows >= 1.5s`);
+    } else {
+      console.log(`[stitch] ⚠️  NARRATOR-ONLY audio has ${windows.length} silent window(s) >= 1.5s:`);
+      for (const w of windows) {
+        console.log(`         silence: ${w.start.toFixed(2)}s → ${w.end.toFixed(2)}s  (${w.dur.toFixed(2)}s long)`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[stitch] narrator silence scan failed: ${(e as Error).message.slice(0, 100)}`);
+  }
+
   let finalPath = concatPath;
 
   if (opts.musicPath) {
