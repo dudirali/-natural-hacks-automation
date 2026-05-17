@@ -1,7 +1,11 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { z } from "zod";
-import { CaptionsOverlay } from "./components/CaptionsOverlay";
+import { CanvasCaptions } from "./components/template/CanvasCaptions";
+import { TopBanner, TOP_BANNER_HEIGHT } from "./components/template/TopBanner";
+import { BottomBanner, BOTTOM_BANNER_HEIGHT } from "./components/template/BottomBanner";
+import { CanvasBackground } from "./components/template/CanvasBackground";
+import { CircleMask } from "./components/template/CircleMask";
 import { SubscribePopup } from "./components/SubscribePopup";
 import { EndScreen } from "./components/EndScreen";
 import { AnimationDispatcher, animationSchema } from "./components/animations";
@@ -13,17 +17,16 @@ export const wordSchema = z.object({
 });
 
 export const longSchema = z.object({
-  /** Single pre-stitched video file — referenced only for prop compatibility; not used. */
   videoFile: z.string().optional(),
-  /** Global word timestamps across the entire stitched video */
   words: z.array(wordSchema),
   fps: z.number(),
   durationFrames: z.number(),
   totalSeconds: z.number().optional(),
   width: z.number().optional(),
   height: z.number().optional(),
-  /** Animations / infographics that fully replace B-roll during their window. */
   animations: z.array(animationSchema).optional(),
+  /** Title shown in the permanent top banner (typically `thumbnail_hook`). */
+  videoTitle: z.string().optional(),
 });
 
 export type LongProps = z.infer<typeof longSchema>;
@@ -36,52 +39,107 @@ export const DEFAULT_PROPS: LongProps = {
   totalSeconds: 3,
   width: 1280,
   height: 720,
+  animations: [],
+  videoTitle: "7 SILENT SIGNS",
+};
+
+const CHROMA = "#FF00FF";
+
+// Layout constants
+const WIDTH = 1280;
+const HEIGHT = 720;
+const CANVAS_TOP = TOP_BANNER_HEIGHT;
+const CANVAS_BOTTOM = HEIGHT - BOTTOM_BANNER_HEIGHT;
+const CIRCLE_R = 220;
+const CIRCLE_CX = 280;
+const CIRCLE_CY = (CANVAS_TOP + CANVAS_BOTTOM) / 2;
+// Captions box on the right of the canvas
+const CAPTIONS_BOX = {
+  left: CIRCLE_CX + CIRCLE_R + 40, // start right of circle
+  top: CANVAS_TOP + 20,
+  right: WIDTH - 40,
+  bottom: CANVAS_BOTTOM - 20,
 };
 
 /**
- * Captions-only overlay rendered against a chroma-key background (magenta
- * #FF00FF). FFmpeg removes the magenta to transparency via the colorkey
- * filter, then overlays onto the stitched B-roll. We use chroma-key rather
- * than alpha-WebM because VP8/VP9 alpha encoding via Remotion CLI silently
- * dropped the alpha channel to yuv420p on Railway.
- *
- * Pure magenta is safe: captions are white/yellow text on near-black pill,
- * vignette is grayscale gradient → no risk of color collision.
+ * Fixed-template composition.
+ * Layers (back→front):
+ *   1. Full-frame chroma fill (becomes transparent everywhere we don't paint).
+ *   2. Opaque canvas background (white→mint gradient + soft pattern).
+ *   3. CircleMask: paints magenta inside a circle on the left → chroma-key
+ *      removes it at composite time, letting the stitched B-roll show through.
+ *   4. CanvasCaptions on the right.
+ *   5. AnimationDispatcher — when an animation is active, it fills the entire
+ *      canvas area (between the banners) with an opaque infographic that
+ *      covers both the circle and captions.
+ *   6. TopBanner + BottomBanner — always visible, top z-order.
+ *   7. SubscribePopup at 28s (hidden when an animation is on screen).
+ *   8. EndScreen in the last 8s.
  */
-const CHROMA = "#FF00FF";
-
-export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations }) => {
+export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations, videoTitle }) => {
   const total = totalSeconds ?? 300;
+  const title = videoTitle ?? "@naturalhacks";
+
   return (
     <AbsoluteFill style={{ backgroundColor: CHROMA }}>
-      {/* B-roll vignette (only visible when no animation is playing — animations
-          have opaque backgrounds and cover the magenta + vignette). */}
-      <AbsoluteFill
-        style={{
-          background:
-            "linear-gradient(180deg, rgba(0,0,0,0) 65%, rgba(0,0,0,0.55) 100%)",
-          pointerEvents: "none",
-        }}
+      {/* 2: Opaque canvas covers the middle region only */}
+      <CanvasBackground top={CANVAS_TOP} bottom={BOTTOM_BANNER_HEIGHT} />
+
+      {/* 3: Circular chroma porthole on the left for B-roll */}
+      <CircleMask cx={CIRCLE_CX} cy={CIRCLE_CY} r={CIRCLE_R} />
+
+      {/* 4: Captions on the right side of canvas (black text) */}
+      <CanvasCaptions words={words} box={CAPTIONS_BOX} />
+
+      {/* 5: Animations cover the canvas area when active.
+              Constrained between the banners so the branding stays visible. */}
+      <CanvasAnimations
+        animations={animations ?? []}
+        top={CANVAS_TOP}
+        bottom={BOTTOM_BANNER_HEIGHT}
       />
 
-      {/* Animations replace B-roll during their windows (opaque backgrounds).
-          Placed BEFORE captions so captions sit on top when both visible. */}
-      <AnimationDispatcher animations={animations ?? []} />
+      {/* 6: Permanent banners */}
+      <TopBanner title={title} />
+      <BottomBanner />
 
-      <CaptionsOverlay words={words} />
-
-      {/* Subscribe popup at 28s — only renders if not in an animation window. */}
+      {/* 7+8: Popups — hidden during animations */}
       <ConditionalOverlay animations={animations ?? []}>
         <SubscribePopup appearAt={28} duration={5} />
       </ConditionalOverlay>
-
       <EndScreen totalSeconds={total} windowSeconds={8} />
     </AbsoluteFill>
   );
 };
 
-/** Hides children when an animation is currently on screen (so popups
- *  don't appear over our full-screen infographics). */
+/** Renders the AnimationDispatcher constrained to a vertical band between
+ *  the top and bottom banners (so the banners stay visible above/below). */
+const CanvasAnimations: React.FC<{
+  animations: Array<{ start: number; duration: number }>;
+  top: number;
+  bottom: number;
+}> = ({ animations, top, bottom }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
+  const isAnimating = animations.some((a) => t >= a.start && t < a.start + a.duration);
+  if (!isAnimating) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        top,
+        bottom,
+        overflow: "hidden",
+      }}
+    >
+      <AnimationDispatcher animations={animations as any} />
+    </div>
+  );
+};
+
 const ConditionalOverlay: React.FC<{
   animations: Array<{ start: number; duration: number }>;
   children: React.ReactNode;

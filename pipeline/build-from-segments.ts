@@ -217,6 +217,8 @@ const renderProps = {
   height: TARGET_HEIGHT,
   /** Infographic animations that replace B-roll during their windows. */
   animations,
+  /** Title shown permanently in the top banner. */
+  videoTitle: process.env.BUILD_TOPIC_TITLE ?? "",
 };
 await writeFile(join(OUT_DIR, "render-props.json"), JSON.stringify(renderProps, null, 2));
 

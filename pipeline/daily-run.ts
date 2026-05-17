@@ -84,6 +84,7 @@ async function main() {
     env: {
       ...process.env,
       BUILD_TOPIC_ID: topic.id,
+      BUILD_TOPIC_TITLE: topic.title,
       BUILD_SEGMENTS_CONFIG: `output/${topic.id}/segments.json`,
     },
   });
