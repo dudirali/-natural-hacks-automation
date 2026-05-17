@@ -36,7 +36,36 @@ interface TTSResponse {
 
 const VOICE_CONFIG_PATH = join(process.cwd(), "config", "voices.json");
 
+// Wrap the entire TTS-call-then-download flow in an outer retry loop so we
+// can re-issue a fresh TTS request if HeyGen returns metadata that looks
+// correct but the actual audio is broken (silent, truncated, etc).
+const TTS_OUTER_ATTEMPTS = 3;
+const MIN_ACCEPTABLE_LUFS = -35; // anything quieter is "dead air"
+
 export async function narrate(
+  text: string,
+  outDir: string,
+  options: { speed?: number } = {}
+): Promise<NarrationResult> {
+  let lastError: Error | null = null;
+  for (let outer = 1; outer <= TTS_OUTER_ATTEMPTS; outer++) {
+    try {
+      const result = await narrateOnce(text, outDir, options);
+      return result;
+    } catch (e) {
+      lastError = e as Error;
+      if (outer < TTS_OUTER_ATTEMPTS) {
+        console.warn(
+          `  [narrate] ⚠️  outer attempt ${outer}/${TTS_OUTER_ATTEMPTS} failed: ${lastError.message}. Re-issuing TTS request...`
+        );
+        await new Promise((r) => setTimeout(r, 3000 * outer));
+      }
+    }
+  }
+  throw lastError ?? new Error("narrate failed after all attempts");
+}
+
+async function narrateOnce(
   text: string,
   outDir: string,
   options: { speed?: number } = {}
@@ -164,6 +193,28 @@ export async function narrate(
       `  [narrate] ⚠️  truncated download (actual ${actualDuration.toFixed(2)}s / claimed ${claimedDuration.toFixed(2)}s — short by ${shortBy.toFixed(2)}s). Retrying ${attempt + 1}/${DOWNLOAD_RETRIES}...`
     );
     await new Promise((r) => setTimeout(r, 1500 * attempt));
+  }
+
+  // Loudness sanity check: a valid narration of N seconds should have
+  // integrated loudness around -20 to -16 LUFS. If the file came back as
+  // mostly silence (< -35 LUFS), HeyGen produced dead air — re-issue.
+  try {
+    const { execSync } = await import("node:child_process");
+    const lufsOut = execSync(
+      `ffmpeg -hide_banner -nostats -i "${audioPath}" -af "ebur128=peak=true" -f null - 2>&1 | awk '/^    I:/{print $2}' | tail -1`,
+      { encoding: "utf8", shell: "/bin/bash" } as any
+    ).trim();
+    const lufs = parseFloat(lufsOut);
+    if (!isFinite(lufs) || lufs < MIN_ACCEPTABLE_LUFS) {
+      throw new Error(
+        `narration audio is silent/dead-air (LUFS=${isFinite(lufs) ? lufs.toFixed(1) : "n/a"}, threshold ${MIN_ACCEPTABLE_LUFS}). Text: "${text.slice(0, 60)}..."`
+      );
+    }
+  } catch (e) {
+    // If the ebur128 measurement itself failed (e.g. ffmpeg crash on a
+    // corrupt file), treat that as a dead-air failure too.
+    if ((e as Error).message.includes("dead-air")) throw e;
+    console.warn(`  [narrate] loudness check skipped: ${(e as Error).message.slice(0, 100)}`);
   }
 
   const rawWords = data.word_timestamps ?? [];
