@@ -232,6 +232,10 @@ async function narrateOnce(
     const meanMatch = meanOut.match(/mean_volume:\s*(-?[\d.]+)\s*dB/);
     const meanDb = meanMatch ? parseFloat(meanMatch[1]) : 0;
 
+    // ALWAYS log the metrics so we can see what the check is seeing in production.
+    console.log(
+      `  [narrate] audio metrics: ${actualDuration.toFixed(2)}s | silence ${(silenceRatio * 100).toFixed(0)}% (${silenceTotal.toFixed(1)}s) | mean ${meanDb.toFixed(1)}dB | text="${text.slice(0, 50)}..."`
+    );
     if (silenceRatio > 0.4) {
       throw new Error(
         `narration mostly silent: ${(silenceRatio * 100).toFixed(0)}% silence (${silenceTotal.toFixed(1)}s of ${actualDuration.toFixed(1)}s), mean=${meanDb}dB. Text: "${text.slice(0, 60)}..."`

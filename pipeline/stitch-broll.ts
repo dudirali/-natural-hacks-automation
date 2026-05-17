@@ -154,13 +154,12 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
         "-i", shellQuote(concatPath),
         "-stream_loop", "-1",
         "-i", shellQuote(opts.musicPath),
-        // Normalize narrator to -16 LUFS for consistent foreground level
-        // regardless of HeyGen output variance. Music ducks under narrator
-        // (gentler 3:1 ratio = less obvious "popping" when narrator pauses).
-        // amix: normalize=0 + dropout_transition=0 so no automatic attenuation
-        // or breath-triggered fades.
+        // Narrator goes through unchanged (no loudnorm — single-pass loudnorm
+        // on a long stitched track can cause uneven gain reductions). HeyGen
+        // output is already consistent enough.
+        // Music: loudnorm to -26 LUFS, sidechain-ducked under narrator.
         "-filter_complex", shellQuote(
-          `[0:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[narr1][narr_sc];` +
+          `[0:a]asplit=2[narr1][narr_sc];` +
           `[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,atrim=duration=${totalSeconds.toFixed(3)},loudnorm=I=-26:LRA=11:TP=-3.0,volume=${musicVolume}[mus_raw];` +
           `[mus_raw][narr_sc]sidechaincompress=threshold=0.05:ratio=3:attack=15:release=700:makeup=1[mus_ducked];` +
           `[narr1][mus_ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
