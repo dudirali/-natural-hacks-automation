@@ -1,9 +1,10 @@
 import React from "react";
-import { AbsoluteFill } from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { z } from "zod";
 import { CaptionsOverlay } from "./components/CaptionsOverlay";
 import { SubscribePopup } from "./components/SubscribePopup";
 import { EndScreen } from "./components/EndScreen";
+import { AnimationDispatcher, animationSchema } from "./components/animations";
 
 export const wordSchema = z.object({
   word: z.string(),
@@ -21,6 +22,8 @@ export const longSchema = z.object({
   totalSeconds: z.number().optional(),
   width: z.number().optional(),
   height: z.number().optional(),
+  /** Animations / infographics that fully replace B-roll during their window. */
+  animations: z.array(animationSchema).optional(),
 });
 
 export type LongProps = z.infer<typeof longSchema>;
@@ -47,12 +50,12 @@ export const DEFAULT_PROPS: LongProps = {
  */
 const CHROMA = "#FF00FF";
 
-export const Long: React.FC<LongProps> = ({ words, totalSeconds }) => {
-  // Default to 300s if not provided (e.g. studio preview).
+export const Long: React.FC<LongProps> = ({ words, totalSeconds, animations }) => {
   const total = totalSeconds ?? 300;
   return (
     <AbsoluteFill style={{ backgroundColor: CHROMA }}>
-      {/* Vignette at bottom for caption legibility */}
+      {/* B-roll vignette (only visible when no animation is playing — animations
+          have opaque backgrounds and cover the magenta + vignette). */}
       <AbsoluteFill
         style={{
           background:
@@ -61,14 +64,32 @@ export const Long: React.FC<LongProps> = ({ words, totalSeconds }) => {
         }}
       />
 
+      {/* Animations replace B-roll during their windows (opaque backgrounds).
+          Placed BEFORE captions so captions sit on top when both visible. */}
+      <AnimationDispatcher animations={animations ?? []} />
+
       <CaptionsOverlay words={words} />
 
-      {/* Subscribe popup at 28s — early enough to catch new viewers
-          before the YouTube average-view-duration cliff. */}
-      <SubscribePopup appearAt={28} duration={5} />
+      {/* Subscribe popup at 28s — only renders if not in an animation window. */}
+      <ConditionalOverlay animations={animations ?? []}>
+        <SubscribePopup appearAt={28} duration={5} />
+      </ConditionalOverlay>
 
-      {/* End screen — last 8s. Dark scrim + big SUBSCRIBE CTA + handle. */}
       <EndScreen totalSeconds={total} windowSeconds={8} />
     </AbsoluteFill>
   );
+};
+
+/** Hides children when an animation is currently on screen (so popups
+ *  don't appear over our full-screen infographics). */
+const ConditionalOverlay: React.FC<{
+  animations: Array<{ start: number; duration: number }>;
+  children: React.ReactNode;
+}> = ({ animations, children }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const t = frame / fps;
+  const isAnimating = animations.some((a) => t >= a.start && t < a.start + a.duration);
+  if (isAnimating) return null;
+  return <>{children}</>;
 };

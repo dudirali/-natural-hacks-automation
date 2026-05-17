@@ -5,6 +5,7 @@ import { execSync } from "node:child_process";
 import { narrateSegments } from "./narrate-segments.ts";
 import { searchAndDownloadClip } from "./pexels.ts";
 import { stitchBroll } from "./stitch-broll.ts";
+import { generateAnimations } from "./generate-animations.ts";
 import type { Segment } from "./generate-script.ts";
 
 interface CaptionWord {
@@ -180,6 +181,30 @@ for (const seg of segments) {
 const totalSeconds = stitch.totalSeconds;
 const durationFrames = Math.ceil(totalSeconds * TARGET_FPS);
 
+// PHASE 5b — Generate animations / infographics that replace B-roll in their
+// windows. Claude reads the script + cumulative timings and produces ~10-15
+// animations distributed across the video.
+console.log(`\n[5b/5] Generating animations from script (Claude motion-graphics director)...`);
+const at0 = Date.now();
+const segmentTimings: Array<{ id: number; start: number; end: number }> = [];
+let cumT = 0;
+for (const seg of segments) {
+  const n = narrations.find((x) => x.id === seg.id)!;
+  const segStart = cumT;
+  cumT += n.duration + SCENE_TAIL_BUFFER;
+  segmentTimings.push({ id: seg.id, start: segStart, end: cumT });
+}
+let animations: Awaited<ReturnType<typeof generateAnimations>> = [];
+try {
+  animations = await generateAnimations(segments, segmentTimings);
+  console.log(`      ✅ ${animations.length} animations generated in ${((Date.now() - at0) / 1000).toFixed(0)}s`);
+  for (const a of animations) {
+    console.log(`         ${a.start.toFixed(1)}s +${a.duration}s  ${a.data.type}`);
+  }
+} catch (e) {
+  console.warn(`      ⚠️  animations generation failed: ${(e as Error).message.slice(0, 120)} — continuing without animations`);
+}
+
 const renderProps = {
   /** Single stitched video file (B-roll + audio + music baked in) */
   videoFile: stitchedPublicName,
@@ -190,6 +215,8 @@ const renderProps = {
   totalSeconds,
   width: TARGET_WIDTH,
   height: TARGET_HEIGHT,
+  /** Infographic animations that replace B-roll during their windows. */
+  animations,
 };
 await writeFile(join(OUT_DIR, "render-props.json"), JSON.stringify(renderProps, null, 2));
 
