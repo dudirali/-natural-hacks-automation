@@ -12,6 +12,8 @@ export interface YouTubeUploadOptions {
   categoryId?: string;
   privacyStatus?: "private" | "unlisted" | "public";
   madeForKids?: boolean;
+  /** Optional path to a custom thumbnail (JPG/PNG, ≤2MB, 1280×720 recommended). */
+  thumbnailPath?: string;
 }
 
 export interface YouTubeUploadResult {
@@ -77,6 +79,24 @@ export async function uploadToYouTube(opts: YouTubeUploadOptions): Promise<YouTu
   if (!videoId) throw new Error(`YouTube returned no video id`);
 
   console.log(`[upload] ✅ done in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+
+  // Set custom thumbnail (optional). Requires the videos.upload + youtube
+  // scope we already have. Failures here are non-fatal — the video is
+  // already published, just falls back to YouTube's auto-thumbnail.
+  if (opts.thumbnailPath) {
+    try {
+      const thumbStats = await stat(opts.thumbnailPath);
+      console.log(`[thumbnail] uploading ${opts.thumbnailPath} (${(thumbStats.size / 1024).toFixed(0)} KB)`);
+      await youtube.thumbnails.set({
+        videoId,
+        media: { body: createReadStream(opts.thumbnailPath) },
+      });
+      console.log(`[thumbnail] ✅ set`);
+    } catch (e) {
+      console.warn(`[thumbnail] ⚠️  failed: ${(e as Error).message.slice(0, 200)}`);
+    }
+  }
+
   return {
     videoId,
     url: `https://youtube.com/watch?v=${videoId}`,

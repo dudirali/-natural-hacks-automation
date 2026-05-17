@@ -133,13 +133,44 @@ async function main() {
   logHeader("Step 5/7 — Generate YouTube metadata");
   const metadata = await generateMetadata(topic, segments);
   console.log(`Title:    ${metadata.title}`);
+  console.log(`Hook:     ${metadata.thumbnail_hook}  (accent: ${metadata.thumbnail_accent})`);
   console.log(`Tags:     ${metadata.tags.slice(0, 8).join(", ")}...`);
   await writeFile(join(TOPIC_OUT_DIR, "metadata.json"), JSON.stringify(metadata, null, 2));
+
+  // 5b) Render custom thumbnail.
+  // Extract a single mid-frame from segment 1's Pexels clip as the hero image,
+  // then Remotion renders the Thumbnail composition (overlay text + accent).
+  logHeader("Step 5b/7 — Render thumbnail");
+  const PUBLIC_DIR_LOCAL = join(ROOT, "public");
+  const heroBasename = `thumbnail-hero.jpg`;
+  const heroPath = join(PUBLIC_DIR_LOCAL, heroBasename);
+  const seg1VideoPath = join(TOPIC_OUT_DIR, "segments", "1", "video.mp4");
+  execSync(
+    `ffmpeg -y -hide_banner -loglevel error -ss 2 -i "${seg1VideoPath}" ` +
+      `-vf "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720" ` +
+      `-frames:v 1 -q:v 2 "${heroPath}"`,
+    { cwd: ROOT, stdio: "inherit" }
+  );
+  const thumbnailProps = {
+    heroImage: heroBasename,
+    hook: metadata.thumbnail_hook,
+    accent: metadata.thumbnail_accent,
+  };
+  const thumbnailPropsPath = join(TOPIC_OUT_DIR, "thumbnail-props.json");
+  await writeFile(thumbnailPropsPath, JSON.stringify(thumbnailProps, null, 2));
+  const thumbnailPng = join(TOPIC_OUT_DIR, "thumbnail.png");
+  execSync(
+    `npx remotion render remotion/src/index.ts Thumbnail ${thumbnailPng} ` +
+      `--props=${thumbnailPropsPath} --image-format=png --frames=0`,
+    { cwd: ROOT, stdio: "inherit" }
+  );
+  console.log(`✅ Thumbnail → ${thumbnailPng}`);
 
   // 6) Upload to YouTube as PUBLIC
   logHeader("Step 6/7 — Upload to YouTube (public)");
   const uploadResult = await uploadToYouTube({
     videoPath: finalMp4,
+    thumbnailPath: thumbnailPng,
     title: metadata.title,
     description: metadata.description,
     tags: metadata.tags,
