@@ -195,26 +195,56 @@ async function narrateOnce(
     await new Promise((r) => setTimeout(r, 1500 * attempt));
   }
 
-  // Loudness sanity check: a valid narration of N seconds should have
-  // integrated loudness around -20 to -16 LUFS. If the file came back as
-  // mostly silence (< -35 LUFS), HeyGen produced dead air — re-issue.
+  // Dead-air detection — TWO metrics, since ebur128 alone misses partial
+  // silence due to its gating algorithm (gates out silent parts so a file
+  // that's 70% silent still reports -16 LUFS integrated).
+  //
+  //   metric 1: silencedetect — count total contiguous silence above 0.3s.
+  //             If > 40% of the file is silence, it's broken narration.
+  //   metric 2: volumedetect mean_volume — should be > -40 dBFS for a real
+  //             narration. A mostly-silent file has mean_volume < -50.
   try {
     const { execSync } = await import("node:child_process");
-    const lufsOut = execSync(
-      `ffmpeg -hide_banner -nostats -i "${audioPath}" -af "ebur128=peak=true" -f null - 2>&1 | awk '/^    I:/{print $2}' | tail -1`,
+    // silencedetect
+    const silOut = execSync(
+      `ffmpeg -hide_banner -nostats -i "${audioPath}" -af "silencedetect=noise=-40dB:duration=0.3" -f null - 2>&1 | grep -E "silence_(start|end)" || true`,
       { encoding: "utf8", shell: "/bin/bash" } as any
-    ).trim();
-    const lufs = parseFloat(lufsOut);
-    if (!isFinite(lufs) || lufs < MIN_ACCEPTABLE_LUFS) {
+    );
+    let silenceTotal = 0;
+    let lastStart: number | null = null;
+    for (const line of silOut.split("\n")) {
+      const sm = line.match(/silence_start:\s*([\d.]+)/);
+      const em = line.match(/silence_end:\s*([\d.]+)/);
+      if (sm) lastStart = parseFloat(sm[1]);
+      else if (em && lastStart != null) {
+        silenceTotal += parseFloat(em[1]) - lastStart;
+        lastStart = null;
+      }
+    }
+    if (lastStart != null) silenceTotal += actualDuration - lastStart;
+    const silenceRatio = actualDuration > 0 ? silenceTotal / actualDuration : 0;
+
+    // volumedetect mean
+    const meanOut = execSync(
+      `ffmpeg -hide_banner -nostats -i "${audioPath}" -af volumedetect -f null - 2>&1 | grep mean_volume || true`,
+      { encoding: "utf8", shell: "/bin/bash" } as any
+    );
+    const meanMatch = meanOut.match(/mean_volume:\s*(-?[\d.]+)\s*dB/);
+    const meanDb = meanMatch ? parseFloat(meanMatch[1]) : 0;
+
+    if (silenceRatio > 0.4) {
       throw new Error(
-        `narration audio is silent/dead-air (LUFS=${isFinite(lufs) ? lufs.toFixed(1) : "n/a"}, threshold ${MIN_ACCEPTABLE_LUFS}). Text: "${text.slice(0, 60)}..."`
+        `narration mostly silent: ${(silenceRatio * 100).toFixed(0)}% silence (${silenceTotal.toFixed(1)}s of ${actualDuration.toFixed(1)}s), mean=${meanDb}dB. Text: "${text.slice(0, 60)}..."`
+      );
+    }
+    if (meanDb < -45) {
+      throw new Error(
+        `narration mean volume too low: ${meanDb}dB (expected > -40). Likely dead audio. Text: "${text.slice(0, 60)}..."`
       );
     }
   } catch (e) {
-    // If the ebur128 measurement itself failed (e.g. ffmpeg crash on a
-    // corrupt file), treat that as a dead-air failure too.
-    if ((e as Error).message.includes("dead-air")) throw e;
-    console.warn(`  [narrate] loudness check skipped: ${(e as Error).message.slice(0, 100)}`);
+    if ((e as Error).message.includes("narration ")) throw e;
+    console.warn(`  [narrate] dead-air check skipped: ${(e as Error).message.slice(0, 100)}`);
   }
 
   const rawWords = data.word_timestamps ?? [];
