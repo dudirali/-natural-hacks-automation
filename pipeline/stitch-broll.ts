@@ -71,13 +71,17 @@ export async function stitchBroll(opts: StitchInput): Promise<StitchResult> {
       "-i", shellQuote(seg.videoPath),
       "-i", shellQuote(seg.audioPath),
       "-t", dur,
+      // Map explicitly: video from input 0 (Pexels), audio from input 1
+      // (HeyGen narration). Without -map, ffmpeg's stream-picker sometimes
+      // chose the Pexels clip's silent/ambient audio track, leaving the
+      // narration entirely out of the segment — that was the source of
+      // the "narrator missing" silent windows in stitched concat.
+      "-map", "0:v:0",
+      "-map", "1:a:0",
       "-vf", shellQuote(
         `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},setsar=1`
       ),
-      // Pad audio with silence so it matches the full segment duration (dur).
-      // Without this, -shortest cut audio at audioDuration and the segment was
-      // 0.1s shorter than expected, drifting captions ahead of audio by ~3.8s
-      // across 38 segments (silent moments where captions appear ahead).
+      // Pad audio with silence to match the full segment duration (dur).
       "-af", shellQuote(`apad=whole_dur=${dur}`),
       "-c:v", "libx264",
       "-preset", "veryfast",
