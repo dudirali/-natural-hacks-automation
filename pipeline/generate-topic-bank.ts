@@ -17,6 +17,8 @@ interface Topic {
 const ROOT = process.cwd();
 const BANK_PATH = join(ROOT, "config", "topic-bank.json");
 
+const BATCH_SIZE = 50; // ~150 tokens per topic × 50 = ~7500 tokens of output, fits comfortably
+
 async function main() {
   const target = parseInt(process.argv[2] ?? "50", 10);
 
@@ -26,9 +28,8 @@ async function main() {
   } catch {
     existing = [];
   }
-  const existingIds = new Set(existing.map((t) => t.id));
 
-  console.log(`[topic-gen] Existing: ${existing.length}. Target: +${target} new.`);
+  console.log(`[topic-gen] Existing: ${existing.length}. Target: +${target} new (batches of ${BATCH_SIZE}).`);
 
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
@@ -60,38 +61,69 @@ DIVERSITY: spread across all categories. Avoid clustering.
 
 Return ONLY a JSON array. No markdown fences, no commentary.`;
 
-  const userPrompt = `Generate ${target} brand-new topics for the channel. AVOID these existing topics:
+  // Batch loop — each call asks for BATCH_SIZE topics, avoiding all titles
+  // already in the bank (including prior batches in this same run).
+  let acquired = 0;
+  while (acquired < target) {
+    const want = Math.min(BATCH_SIZE, target - acquired);
+    const batchNum = Math.floor(acquired / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(target / BATCH_SIZE);
+    console.log(`\n[topic-gen] Batch ${batchNum}/${totalBatches} — requesting ${want} topics...`);
+
+    const userPrompt = `Generate ${want} brand-new topics for the channel. AVOID titles that already exist (full list):
 ${existing.map((t) => `- ${t.title}`).join("\n") || "(none yet)"}
 
 Cover variety: gut health, sleep, joint pain, energy, brain fog, vision, skin, weight loss, heart health, breathing, gentle movement, deficiencies, specific foods/spices/seeds, age-specific (50+, 60+) tips, kitchen tricks, common mistakes.
 
-Return ONLY a valid JSON array of ${target} objects.`;
+Return ONLY a valid JSON array of ${want} objects.`;
 
-  console.log(`[topic-gen] Calling Claude...`);
-  const t0 = Date.now();
-  const res = await client.messages.create({
-    model: "claude-opus-4-7",
-    max_tokens: 16000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
+    const t0 = Date.now();
+    const res = await client.messages.create({
+      model: "claude-opus-4-7",
+      max_tokens: 12000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
 
-  const raw = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
-  const newTopics: Topic[] = JSON.parse(cleaned);
+    const raw = res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+    let newTopics: Topic[];
+    try {
+      newTopics = JSON.parse(cleaned);
+    } catch (e) {
+      console.error(`[topic-gen] batch ${batchNum} JSON parse failed; raw head:\n${cleaned.slice(0, 400)}`);
+      throw e;
+    }
 
-  console.log(`[topic-gen] ✅ ${newTopics.length} topics in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  console.log(`[topic-gen] tokens in/out: ${res.usage.input_tokens}/${res.usage.output_tokens}`);
+    const existingIds = new Set(existing.map((t) => t.id));
+    const existingTitles = new Set(existing.map((t) => t.title.toLowerCase().trim()));
+    const fresh = newTopics.filter(
+      (t) => !existingIds.has(t.id) && !existingTitles.has(t.title.toLowerCase().trim())
+    );
 
-  const fresh = newTopics.filter((t) => !existingIds.has(t.id));
-  const merged = [...existing, ...fresh];
-  await writeFile(BANK_PATH, JSON.stringify(merged, null, 2));
-  console.log(`[topic-gen] Bank now has ${merged.length} topics (+${fresh.length} new).`);
-  console.log(`\nSample of new:`);
-  for (const t of fresh.slice(0, 8)) console.log(`  • ${t.title}`);
+    console.log(
+      `[topic-gen] batch ${batchNum} → ${fresh.length}/${newTopics.length} unique in ${((Date.now() - t0) / 1000).toFixed(0)}s ` +
+        `(tok in/out ${res.usage.input_tokens}/${res.usage.output_tokens})`
+    );
+
+    existing.push(...fresh);
+    acquired += fresh.length;
+
+    // Save incrementally so a mid-run failure doesn't lose work.
+    await writeFile(BANK_PATH, JSON.stringify(existing, null, 2));
+
+    if (fresh.length === 0) {
+      console.warn(`[topic-gen] batch returned zero new topics — Claude is duplicating. Stopping early.`);
+      break;
+    }
+  }
+
+  console.log(`\n[topic-gen] Bank now has ${existing.length} topics (+${acquired} added).`);
+  console.log(`Sample of newest:`);
+  for (const t of existing.slice(-8)) console.log(`  • ${t.title}`);
 }
 
 main().catch((e) => {
